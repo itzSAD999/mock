@@ -1,0 +1,7 @@
+{
+  "name": "cos-quiz-drill",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/write-config.js"
+  }
+}
