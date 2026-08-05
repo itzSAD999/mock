@@ -3407,6 +3407,10 @@
 
   function buildLivePool(pack, seedStr) {
     const seed = hashSeed(seedStr || "cos-live");
+    const bank = allQuestions();
+    if (pack === "full") {
+      return seededShuffle(bank, seed);
+    }
     if (pack === "showdown") {
       return seededShuffle(
         [...questionsForRound("riddles"), ...questionsForRound("speed")],
@@ -3414,14 +3418,23 @@
       ).slice(0, 20);
     }
     if (pack === "rapid20") {
-      return seededShuffle(allQuestions(), seed).slice(0, 20);
+      return seededShuffle(bank, seed).slice(0, 20);
+    }
+    if (pack === "rapid40") {
+      return seededShuffle(bank, seed).slice(0, Math.min(40, bank.length));
+    }
+    if (pack === "official92") {
+      return seededShuffle(bank, seed).slice(0, Math.min(92, bank.length));
     }
     return questionsForRound("riddles");
   }
 
   function livePackLabel(pack) {
+    if (pack === "full") return `Full bank (${QUIZ.totalQuestions})`;
     if (pack === "showdown") return "Showdown mix (20)";
     if (pack === "rapid20") return "Rapid 20";
+    if (pack === "rapid40") return "Rapid 40";
+    if (pack === "official92") return "Official-size 92";
     return "Riddles";
   }
 
@@ -3434,6 +3447,27 @@
       clearInterval(state.live.tickId);
       state.live.tickId = null;
     }
+  }
+
+  function leaveLiveRoom({ goHome = true } = {}) {
+    stopLiveLoops();
+    hideLiveCountdown();
+    stopTimer();
+    setLiveError("");
+    state.live = null;
+    state.sessionKind = "practice";
+    state.flow = "practice";
+    state.pool = [];
+    state.index = 0;
+    state.answerLog = [];
+    state.context = null;
+    document.getElementById("live-room-card")?.classList.add("is-hidden");
+    document.getElementById("live-create-panel")?.classList.remove("is-hidden");
+    document.getElementById("live-join-panel")?.classList.remove("is-hidden");
+    const codeInput = document.getElementById("live-join-code");
+    if (codeInput) codeInput.value = "";
+    if (goHome) show("home");
+    else show("live");
   }
 
   function hideLiveCountdown() {
@@ -3935,6 +3969,10 @@
       confirmIdentity();
     } else if (action === "go-home") {
       stopTimer();
+      if (state.live || state.sessionKind === "live") {
+        leaveLiveRoom({ goHome: true });
+        return;
+      }
       stopLiveLoops();
       hideLiveCountdown();
       show("home");
@@ -3948,13 +3986,16 @@
       openHub();
     } else if (action === "exit-practice") {
       stopTimer();
-      if (state.sessionKind === "live") {
-        stopLiveLoops();
-        hideLiveCountdown();
-        openLiveLobby(state.live?.room?.code);
+      if (state.sessionKind === "live" || state.live) {
+        // Leave the live room entirely (do not auto re-join)
+        if (confirm("Leave this live room?")) {
+          leaveLiveRoom({ goHome: true });
+        }
         return;
       }
       openHub();
+    } else if (action === "live-leave") {
+      leaveLiveRoom({ goHome: true });
     } else if (action === "retry") {
       state.isMissReview = false;
       startSession(state.mode === "study" ? "contest" : state.mode);

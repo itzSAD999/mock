@@ -356,9 +356,12 @@
             <h3>Host a room</h3>
             <label class="field-label" for="live-pack">Question pack</label>
             <select id="live-pack" class="answer-field name-field">
+              <option value="full">Full bank (all questions)</option>
               <option value="riddles">Riddles only (showdown warm-up)</option>
               <option value="showdown">Showdown mix (20 Qs)</option>
               <option value="rapid20">Rapid 20 (shared random set)</option>
+              <option value="rapid40">Rapid 40 (shared random set)</option>
+              <option value="official92">Official-size 92 (shared random set)</option>
             </select>
             <label class="field-label" for="live-seconds">Seconds per question</label>
             <select id="live-seconds" class="answer-field name-field">
@@ -420,6 +423,11 @@
           <p class="section-hint is-hidden" id="live-waiting-host">
             Waiting for the host to start…
           </p>
+          <div class="live-leave-row">
+            <button class="btn btn-ghost" data-action="live-leave" type="button">
+              Leave room
+            </button>
+          </div>
         </div>
       </div>
     </section>

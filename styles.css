@@ -1931,8 +1931,11 @@ html[data-theme="light"] .coach-table th {
   font-size: 0.8rem;
 }
 
-.live-host-actions {
-  margin-top: 0.5rem;
+.live-leave-row {
+  margin-top: 1rem;
+}
+.live-leave-row .btn {
+  width: 100%;
 }
 
 @media (max-width: 720px) {
