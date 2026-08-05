@@ -11,13 +11,9 @@ Practice and team-selection site for the College of Science (KNUST) quiz. Scores
    - Email: **ON**
    - **Confirm email: OFF** (so signup works immediately — no inbox required)
 
-## Accounts (email + password)
+## Accounts required
 
-On the site: **Sign in → Create account** (name, department, email, password).
-
-Logged-in users skip the guest name form; practice / selection / official mocks sync to their account. **My progress** shows sessions and topic accuracy. Coach analytics still sees everyone.
-
-Guests can still enter name + department without an account.
+Everyone must **Create account** or **Sign in** before practice, official mocks, or team selection. Progress, history, missed-question drills, and leaderboard entries sync to that account. Coach analytics stays PIN-gated for organizers.
 
 ## Quick start (local)
 

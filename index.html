@@ -38,19 +38,30 @@
         <div class="hero-copy">
           <p class="brand">College of Science</p>
           <h1>Drill for the Inter-Departmental Quiz</h1>
-          <p class="lede">
-            Create an account to save your progress — or run team selection and
-            official mocks. Coach analytics stay available for organizers.
+          <p class="lede" id="home-lede">
+            Sign in first — your practice, official mocks, and history stay on
+            your account with the leaderboard.
           </p>
-          <div class="hero-actions">
-            <button class="btn btn-primary" data-action="start-select">
-              Team selection
+          <div class="hero-actions" id="home-actions-guest">
+            <button class="btn btn-primary" data-action="open-auth-signup">
+              Create account
+            </button>
+            <button class="btn btn-ghost" data-action="open-auth">
+              Sign in
+            </button>
+          </div>
+          <div class="hero-actions is-hidden" id="home-actions-user">
+            <button class="btn btn-primary" data-action="start-practice">
+              Practice
             </button>
             <button class="btn btn-ghost" data-action="start-official">
               Official mock
             </button>
-            <button class="btn btn-ghost" data-action="start-practice">
-              Practice (tracked)
+            <button class="btn btn-ghost" data-action="start-select">
+              Team selection
+            </button>
+            <button class="btn btn-ghost" data-action="my-progress">
+              My progress
             </button>
           </div>
           <button class="link-coach" data-action="open-coach">

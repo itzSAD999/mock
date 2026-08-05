@@ -43,6 +43,7 @@
     coachData: null,
     authUser: null,
     authTab: "signin",
+    pendingAfterAuth: null,
   };
 
   function show(name) {
@@ -135,7 +136,11 @@
     const btn = document.getElementById("btn-auth");
     const chip = document.getElementById("auth-chip");
     const prog = document.getElementById("btn-my-progress");
+    const guestActions = document.getElementById("home-actions-guest");
+    const userActions = document.getElementById("home-actions-user");
+    const lede = document.getElementById("home-lede");
     const user = state.authUser;
+
     if (user) {
       const name =
         user.user_metadata?.display_name ||
@@ -144,11 +149,54 @@
       btn.textContent = "Account";
       chip.textContent = name;
       prog.classList.remove("is-hidden");
+      guestActions?.classList.add("is-hidden");
+      userActions?.classList.remove("is-hidden");
+      if (lede) {
+        lede.textContent =
+          "You're signed in. Practice, take official mocks, and track everything on your account.";
+      }
     } else {
       btn.textContent = "Sign in";
       chip.textContent = "KNUST · 2026";
       prog.classList.add("is-hidden");
+      guestActions?.classList.remove("is-hidden");
+      userActions?.classList.add("is-hidden");
+      if (lede) {
+        lede.textContent =
+          "Sign in first — your practice, official mocks, and history stay on your account with the leaderboard.";
+      }
     }
+  }
+
+  function requireAuth(nextAction) {
+    if (state.authUser && state.playerName && state.playerDept) {
+      return true;
+    }
+    state.pendingAfterAuth = nextAction || null;
+    setAuthTab("signin");
+    show("auth");
+    const err = document.getElementById("signin-error");
+    if (err) {
+      err.textContent = "Create an account or sign in to continue.";
+      err.classList.remove("is-hidden");
+    }
+    return false;
+  }
+
+  async function continueAfterAuth() {
+    const next = state.pendingAfterAuth;
+    state.pendingAfterAuth = null;
+    if (!next) {
+      show("home");
+      return;
+    }
+    if (next === "practice") openNameScreen("practice");
+    else if (next === "official") openNameScreen("official");
+    else if (next === "select") openNameScreen("select");
+    else if (next === "progress") {
+      await loadMyProgress();
+      show("progress");
+    } else show("home");
   }
 
   async function refreshAuth() {
@@ -531,37 +579,37 @@
           : "practice";
     state.isMissReview = false;
 
-    // Logged-in users skip the form — progress is on their account
-    if (state.authUser && state.playerName && state.playerDept) {
+    if (!state.authUser) {
+      requireAuth(
+        flow === "official" ? "official" : flow === "select" ? "select" : "practice"
+      );
+      return;
+    }
+
+    // Signed-in users go straight to the hub — identity is on the account
+    if (state.playerName && state.playerDept) {
       openHub();
       return;
     }
 
-    const eyebrow = document.getElementById("name-eyebrow");
-    const title = document.getElementById("name-title");
-    const hint = document.getElementById("name-hint");
-
-    if (flow === "official") {
-      eyebrow.textContent = "Official mock";
-      title.textContent = "Who is sitting the mock?";
-      hint.textContent =
-        "Tip: Sign in so this mock stays on your account. Or continue as guest.";
-    } else if (flow === "practice") {
-      eyebrow.textContent = "Tracked practice";
-      title.textContent = "Who is practicing?";
-      hint.textContent =
-        "Create an account to keep progress forever — or enter name + department as guest.";
-    } else {
-      eyebrow.textContent = "Team selection";
-      title.textContent = "Who is trying out?";
-      hint.textContent =
-        "They type their own answers. Scores sync so you can compare everyone.";
+    // Profile incomplete — pull from auth metadata once more
+    const meta = state.authUser.user_metadata || {};
+    state.playerName =
+      meta.display_name || state.authUser.email?.split("@")[0] || "";
+    state.playerDept = meta.department || "";
+    if (state.playerName && state.playerDept) {
+      openHub();
+      return;
     }
 
+    // Last resort: show form to complete profile
+    document.getElementById("name-eyebrow").textContent = "Complete profile";
+    document.getElementById("name-title").textContent = "Finish your details";
+    document.getElementById("name-hint").textContent =
+      "Add your name and department once — they stay on your account.";
     document.getElementById("player-name").value = state.playerName || "";
     document.getElementById("player-dept").value = state.playerDept || "";
     show("name");
-    setTimeout(() => document.getElementById("player-name").focus(), 80);
   }
 
   function confirmIdentity() {
@@ -1366,7 +1414,7 @@
     try {
       await db().signIn({ email, password });
       await refreshAuth();
-      show("home");
+      await continueAfterAuth();
     } catch (err) {
       errEl.textContent = err.message || "Sign in failed";
       errEl.classList.remove("is-hidden");
@@ -1385,10 +1433,9 @@
       });
       await refreshAuth();
       if (state.authUser) {
-        show("home");
+        await continueAfterAuth();
         return;
       }
-      // Confirm email still enabled in Supabase dashboard
       if (result.user && !result.session) {
         errEl.textContent =
           "Account created, but Confirm email is still ON in Supabase. Turn it OFF under Authentication → Providers → Email, then sign in.";
@@ -1401,6 +1448,7 @@
   }
 
   async function doSignOut() {
+    const keepPending = state.pendingAfterAuth;
     try {
       await db().signOut();
     } catch (err) {
@@ -1409,8 +1457,9 @@
     state.authUser = null;
     state.playerName = "";
     state.playerDept = "";
+    state.pendingAfterAuth = keepPending;
     updateAuthUI();
-    show("home");
+    if (!keepPending) show("home");
   }
 
   async function loadMyProgress() {
@@ -1516,11 +1565,17 @@
     const action = btn.dataset.action;
 
     if (action === "start-select") {
+      if (!requireAuth("select")) return;
       openNameScreen("select");
     } else if (action === "start-official") {
+      if (!requireAuth("official")) return;
       openNameScreen("official");
     } else if (action === "start-practice" || action === "start-study") {
+      if (!requireAuth("practice")) return;
       openNameScreen("practice");
+    } else if (action === "open-auth-signup") {
+      setAuthTab("signup");
+      show("auth");
     } else if (action === "open-auth") {
       if (state.authUser) {
         loadMyProgress();
@@ -1530,6 +1585,7 @@
         show("auth");
       }
     } else if (action === "my-progress") {
+      if (!requireAuth("progress")) return;
       loadMyProgress();
       show("progress");
     } else if (action === "do-signin") {
@@ -1545,42 +1601,43 @@
       show("home");
     } else if (action === "hub-back") {
       stopTimer();
-      if (
-        state.flow === "select" ||
-        state.flow === "official" ||
-        state.flow === "practice"
-      ) {
-        if (state.authUser) show("home");
-        else show("name");
-      } else show("home");
+      show("home");
     } else if (action === "go-hub") {
       stopTimer();
+      if (!requireAuth(state.flow === "official" ? "official" : state.flow === "select" ? "select" : "practice"))
+        return;
       openHub();
     } else if (action === "exit-practice") {
       stopTimer();
-      if (state.flow === "study" && state.mode === "study") show("mode");
-      else if (state.flow === "study") show("mode");
-      else openHub();
+      openHub();
     } else if (action === "retry") {
       state.isMissReview = false;
       startSession(state.mode === "study" ? "contest" : state.mode);
     } else if (action === "retry-misses") {
       startMissReview();
     } else if (action === "next-contestant") {
-      openNameScreen(state.flow === "official" ? "official" : "select");
+      state.pendingAfterAuth =
+        state.flow === "official" ? "official" : "select";
+      doSignOut().then(() => {
+        setAuthTab("signin");
+        show("auth");
+        const err = document.getElementById("signin-error");
+        if (err) {
+          err.textContent = "Next contestant: sign in with their account.";
+          err.classList.remove("is-hidden");
+        }
+      });
     } else if (action === "show-board") {
+      if (!requireAuth(null)) return;
       state.lastBoardFrom = views.results.classList.contains("is-active")
         ? "results"
-        : views.name.classList.contains("is-active")
-          ? "name"
-          : views.hub.classList.contains("is-active")
-            ? "hub"
-            : "home";
+        : views.hub.classList.contains("is-active")
+          ? "hub"
+          : "home";
       renderBoard();
       show("board");
     } else if (action === "board-back") {
       if (state.lastBoardFrom === "results") show("results");
-      else if (state.lastBoardFrom === "name") show("name");
       else if (state.lastBoardFrom === "hub") openHub();
       else show("home");
     } else if (action === "clear-board") {
