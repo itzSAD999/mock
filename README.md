@@ -38,8 +38,8 @@ Everyone must **Create account** or **Sign in** before practice, official mocks,
 
 Answers are checked in two layers:
 
-1. **Rules** — partial text, typos, aliases, “any two of…” lists (instant).
-2. **Semantic model** — if rules say no, a free browser model checks whether the meaning matches.
+1. **Rules** — partial text, typos, aliases, “any two of…” lists (instant). Figures must match exactly; names must be the right person (small typos OK).
+2. **Semantic model** — if rules say no, a free browser model checks whether the meaning matches (skipped for pure numbers / wrong names).
 
 | | |
 |--|--|
@@ -50,6 +50,13 @@ Answers are checked in two layers:
 | **Size** | ~23 MB first download (then cached) |
 
 Implementation: [`semanticScorer.js`](semanticScorer.js). If the model fails to load, scoring still works with rules only.
+
+## Official mock
+
+- Draws **92** questions from the full bank (~235).
+- Everyone who starts in the same **10‑minute window** on the same attempt number gets the **same set** (fair comparison).
+- **Restart / try again** bumps the attempt → a new shared set for that attempt tier.
+- Mid-quiz progress is cached on the device (Continue / Restart / Cancel).
 
 ## Modes
 

@@ -7,7 +7,7 @@ const path = require("path");
 
 const src = fs.readFileSync(path.join(__dirname, "..", "app.js"), "utf8");
 const start = src.indexOf("  /** Same idea, different wording");
-const end = src.indexOf("  /* ——— ANSWER LOG ——— */");
+const end = src.indexOf("  function warmSemanticModel()");
 const body = src.slice(start, end);
 
 function normalize(str) {
@@ -48,10 +48,20 @@ const cases = [
   [true, "prempeh", "Prempeh II Library"],
   [true, "admin block", "The Administration Block"],
   [true, "rita dickson", "Professor Rita Akosua Dickson"],
+  [true, "dickson", "Professor Rita Akosua Dickson"],
+  [false, "john smith", "Professor Rita Akosua Dickson"],
+  [true, "christian agyare", "Professor Christian Agyare"],
+  [true, "agyare", "Professor Christian Agyare"],
+  [false, "rita dickson", "Professor Christian Agyare"],
   [true, "kct", "Kumasi College of Technology (KCT)"],
   [true, "co2", "Carbon dioxide (CO₂)"],
   [true, "white and blue", "Blue and White"],
   [true, "5", "x = 5"],
+  [true, "x=5", "x = 5"],
+  [false, "3", "x = 5"],
+  [false, "2", "3"],
+  [true, "3", "3"],
+  [false, "10", "100"],
   [true, "t", { a: "TRUE", type: "tf" }],
 ];
 

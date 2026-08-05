@@ -373,27 +373,46 @@
     const cu = canonToken(u);
     const ck = canonToken(k);
     if (cu === ck) return true;
-    if (cu.length >= 3 && ck.length >= 3 && (ck.includes(cu) || cu.includes(ck))) return true;
+
+    // Digits: exact only (2 ≠ 3, 10 ≠ 100)
+    if (/^-?\d+(\.\d+)?$/.test(cu) || /^-?\d+(\.\d+)?$/.test(ck)) {
+      return cu === ck || Number(cu) === Number(ck);
+    }
+
+    if (cu.length >= 3 && ck.length >= 3 && (ck.includes(cu) || cu.includes(ck))) {
+      if (/^\d/.test(cu) || /^\d/.test(ck)) return cu === ck;
+      return true;
+    }
     if (cu.length >= 4 && ck.length >= 4) {
       const maxLen = Math.max(cu.length, ck.length);
       const minLen = Math.min(cu.length, ck.length);
-      if (Math.abs(cu.length - ck.length) > 4) return false;
+      if (Math.abs(cu.length - ck.length) > 3) return false;
       const dist = editDistance(cu, ck);
       if (dist <= 1) return true;
-      if (dist <= 2 && maxLen >= 5) return true;
-      if (dist <= 3 && maxLen >= 6) return true;
-      // messy typos: kantge ≈ katanga (same first letters)
+      if (dist <= 2 && maxLen >= 6) return true;
       if (
         maxLen >= 6 &&
         minLen >= 5 &&
         cu.slice(0, 2) === ck.slice(0, 2) &&
-        dist <= Math.max(3, Math.floor(maxLen * 0.6))
+        dist <= 4
       ) {
         return true;
       }
-      if (maxLen >= 6 && cu.slice(0, 4) === ck.slice(0, 4) && dist <= 4) return true;
     }
     return false;
+  }
+
+  /** Strict name token — small spelling slips OK, different names not. */
+  function nameTokenSimilar(u, k) {
+    const cu = canonToken(u);
+    const ck = canonToken(k);
+    if (cu === ck) return true;
+    if (/^\d/.test(cu) || /^\d/.test(ck)) return cu === ck;
+    if (Math.abs(cu.length - ck.length) > 2) return false;
+    const dist = editDistance(cu, ck);
+    if (ck.length >= 8) return dist <= 2;
+    if (ck.length >= 5) return dist <= 1;
+    return dist === 0;
   }
 
   function coversMeaning(userToks, keyToks) {
@@ -408,6 +427,99 @@
       return hits.length >= Math.ceil(keyToks.length * 0.5) || strong.length >= 2;
     }
     return (ratio >= 0.4 && hits.length >= 2) || strong.length >= 2;
+  }
+
+  function extractNumbers(str) {
+    return softNormalize(str).match(/-?\d+(\.\d+)?/g) || [];
+  }
+
+  function normNum(n) {
+    const x = String(n);
+    if (x.includes(".")) return String(parseFloat(x));
+    return x.replace(/^0+(\d)/, "$1");
+  }
+
+  /** Mainly a figure / short maths result — wrong number must fail. */
+  function isNumericPrimary(answer) {
+    const soft = softNormalize(answer);
+    const nums = extractNumbers(soft);
+    if (!nums.length) return false;
+    const wordToks = tokens(soft).filter(
+      (t) => !/^-?\d+(\.\d+)?$/.test(t) && !["x", "y", "equal", "equals"].includes(t)
+    );
+    if (wordToks.length <= 2 && nums.length >= 1) return true;
+    if (/^-?\d+(\.\d+)?(c|degrees?)?$/.test(soft.replace(/\s/g, ""))) return true;
+    return wordToks.length === 0;
+  }
+
+  function numbersAgree(userRaw, answer) {
+    const userNums = extractNumbers(userRaw).map(normNum);
+    const ansNums = extractNumbers(answer).map(normNum);
+    if (!ansNums.length) return null;
+    if (!userNums.length) return false;
+
+    const significant = ansNums.filter(
+      (n) => n.length >= 2 || Math.abs(Number(n)) >= 2 || ansNums.length === 1
+    );
+    const needed = significant.length ? significant : ansNums;
+    const allNeeded = needed.every((n) => userNums.includes(n));
+    if (!allNeeded) return false;
+    if (needed.length === 1 && userNums.length === 1) {
+      return userNums[0] === needed[0];
+    }
+    return true;
+  }
+
+  function isNameAnswer(answer) {
+    const a = String(answer || "");
+    if (/\b(professor|prof\.?|doctor|dr\.?)\b/i.test(a)) return true;
+    if (
+      /\b(dickson|agyare|baffour|prempeh|watson|nkrumah|christian|rita|akosua|robert|patrick)\b/i.test(
+        a
+      )
+    ) {
+      return true;
+    }
+    if (
+      /^[A-Z][a-zà-ÿ]+(\s+[A-Z][a-zà-ÿ]+){1,5}/.test(a.trim()) &&
+      !/^(blue|white|carbon|water|true|false)/i.test(a) &&
+      !/any\s+(two|three)/i.test(a)
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  function nameMatches(userRaw, answer) {
+    const skip = new Set([
+      "prof", "professor", "doctor", "dr", "vice", "chancellor", "vc",
+      "ceo", "chief", "executive", "same", "office", "as",
+    ]);
+    const keyToks = tokens(answer).filter((t) => t.length >= 3 && !skip.has(t));
+    const userToks = tokens(userRaw);
+    if (!keyToks.length) return coversMeaning(userToks, tokens(answer));
+
+    // Surname (last part) alone is enough if distinctive — "agyare", "dickson"
+    const surname = keyToks[keyToks.length - 1];
+    if (
+      surname.length >= 5 &&
+      userToks.some((u) => nameTokenSimilar(u, surname))
+    ) {
+      return true;
+    }
+
+    const main = [...keyToks].sort((a, b) => b.length - a.length)[0];
+    const hitMain = userToks.some((u) => nameTokenSimilar(u, main));
+    if (!hitMain) return false;
+
+    if (keyToks.length >= 2) {
+      const hits = keyToks.filter((k) =>
+        userToks.some((u) => nameTokenSimilar(u, k))
+      );
+      if (hits.length >= 2) return true;
+      return main.length >= 6 && hitMain;
+    }
+    return true;
   }
 
   /** University (Katanga) → matches university OR katanga. */
@@ -491,7 +603,7 @@
     const user = softNormalize(userRaw);
     if (!user) return false;
 
-    if (q.type === "tf") {
+    if (q.type === "tf" || /^(true|false)\b/i.test(String(q.a || "").trim())) {
       const correct = softNormalize(q.a).startsWith("true") ? "true" : "false";
       if (/^(t|true|yes|y|correct)$/.test(user)) return correct === "true";
       if (/^(f|false|no|n|wrong|incorrect)$/.test(user)) return correct === "false";
@@ -501,7 +613,6 @@
     const variants = answerVariants(q.a);
     const userToks = tokens(userRaw);
 
-    // Any-two/three lists: need enough DIFFERENT options (Unity + Katanga = correct)
     if (variants._anyOfOptions && variants._anyOfOptions.length) {
       const need = variants._anyOfNeed || 2;
       const hitOpts = variants._anyOfOptions.filter((opt) =>
@@ -510,35 +621,64 @@
       return hitOpts.length >= need;
     }
 
-    for (const v of variants) {
-      if (!v || typeof v !== "string") continue;
-      if (user === v) return true;
-      if (user.length >= 3 && (v.includes(user) || user.includes(v))) return true;
-      if (coversMeaning(userToks, tokens(v))) return true;
+    // Figures / short maths: exact number required (2 vs 3 = wrong)
+    if (isNumericPrimary(q.a)) {
+      const ok = numbersAgree(userRaw, q.a);
+      if (ok === true) return true;
+      if (ok === false) return false;
+    } else {
+      const numCheck = numbersAgree(userRaw, q.a);
+      const ansNums = extractNumbers(q.a);
+      const userNums = extractNumbers(userRaw);
+      if (
+        ansNums.length === 1 &&
+        userNums.length === 1 &&
+        isNumericPrimary(userRaw) &&
+        numCheck === false
+      ) {
+        return false;
+      }
     }
 
-    const userNums = user.match(/-?\d+(\.\d+)?/g) || [];
-    const ansNums = softNormalize(q.a).match(/-?\d+(\.\d+)?/g) || [];
-    if (userNums.length && ansNums.length) {
-      const ansSet = new Set(ansNums);
-      const matched = userNums.filter((n) => ansSet.has(n));
-      if (matched.length >= 1 && (ansNums.length <= 2 || matched.length >= Math.ceil(ansNums.length * 0.5))) {
-        if (matched.some((n) => n.length >= 2 || Number(n) >= 10) || userToks.length <= 3) {
+    // People / proper names: must be the right name (tiny typos OK)
+    if (isNameAnswer(q.a)) {
+      if (nameMatches(userRaw, q.a)) return true;
+      for (const v of variants) {
+        if (typeof v === "string" && isNameAnswer(v) && nameMatches(userRaw, v)) {
           return true;
         }
       }
-      if (userNums.length === 1 && ansNums[0] === userNums[0] && userToks.length <= 4) {
+      return false;
+    }
+
+    for (const v of variants) {
+      if (!v || typeof v !== "string") continue;
+      if (user === v) return true;
+      if (
+        user.length >= 3 &&
+        !/^-?\d+(\.\d+)?$/.test(user) &&
+        (v.includes(user) || user.includes(v))
+      ) {
         return true;
       }
+      if (coversMeaning(userToks, tokens(v))) return true;
     }
+
+    const numOk = numbersAgree(userRaw, q.a);
+    if (numOk === true && userToks.length <= 4) return true;
 
     const key = tokens(variants[0] || q.a);
     return coversMeaning(userToks, key);
   }
 
-  /** Rule match first; if unsure, MiniLM semantic similarity (free, in-browser). */
+  /** Rules first; AI never overrides wrong figures or wrong names. */
   async function checkAnswerSmart(userRaw, q) {
     if (checkAnswer(userRaw, q)) return true;
+
+    if (isNumericPrimary(q.a)) return false;
+    if (isNameAnswer(q.a) && !nameMatches(userRaw, q.a) && tokens(userRaw).length <= 2) {
+      return false;
+    }
 
     const sem = window.CosSemantic;
     if (!sem) return false;
@@ -562,6 +702,8 @@
         ...variants.filter((v) => typeof v === "string"),
       ].filter(Boolean);
 
+      const threshold = isNameAnswer(q.a) ? 0.72 : undefined;
+      if (threshold != null) return sem.matchesAny(userRaw, candidates, threshold);
       return sem.matchesAny(userRaw, candidates);
     } catch (err) {
       console.warn("Semantic scoring skipped", err);
@@ -1170,13 +1312,63 @@
     openHub();
   }
 
-  const OFFICIAL_MOCK_SIZE = 100;
+  const OFFICIAL_MOCK_SIZE = 92;
   const QUICK_MOCK_SIZE = 20;
+  const OFFICIAL_WINDOW_MS = 10 * 60 * 1000; // same set for everyone in a 10‑min window
 
   function pickRandomPool(size) {
     const all = allQuestions();
     const n = Math.min(size, all.length);
     return shuffle(all).slice(0, n);
+  }
+
+  function hashSeed(str) {
+    let h = 2166136261;
+    for (let i = 0; i < String(str).length; i++) {
+      h ^= String(str).charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return h >>> 0;
+  }
+
+  function seededShuffle(arr, seed) {
+    const a = [...arr];
+    let s = seed >>> 0;
+    const rand = () => {
+      s = (s + 0x6d2b79f5) | 0;
+      let t = Math.imul(s ^ (s >>> 15), 1 | s);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  function officialWindowId(now = Date.now()) {
+    return Math.floor(now / OFFICIAL_WINDOW_MS);
+  }
+
+  /**
+   * Shared official set: everyone on attempt N in the same 10‑min window
+   * gets the same 92 questions. Restart / new start bumps attempt → new shared set.
+   */
+  function pickOfficialPool() {
+    const windowId = officialWindowId();
+    const uid = state.authUser?.id || "local";
+    const key = `cos-official-att:${uid}:${windowId}`;
+    let attempt = Number(localStorage.getItem(key) || "0") + 1;
+    localStorage.setItem(key, String(attempt));
+
+    const seed = hashSeed(`cos-official:${windowId}:${attempt}`);
+    const size = Math.min(OFFICIAL_MOCK_SIZE, allQuestions().length);
+    const pool = seededShuffle(allQuestions(), seed).slice(0, size);
+    const ends = new Date((windowId + 1) * OFFICIAL_WINDOW_MS);
+    const label = `Official mock · ${pool.length} Qs · set ${windowId}.${attempt} (shared until ${ends.toLocaleTimeString()})`;
+
+    return { pool, windowId, attempt, seed, label };
   }
 
   function openDraftModal(message) {
@@ -1255,7 +1447,7 @@
       <button class="round-tile round-tile-full" data-round="official100">
         <div class="rt-num">Official</div>
         <h3>Official mock</h3>
-        <p>${officialN} questions chosen at random from the ${bankN}-question bank — new mix every start.</p>
+        <p>${officialN} questions from the ${bankN}-question bank. Same set for everyone in a 10‑minute window; restart gets a new shared set.</p>
         <span class="rt-count">${officialN} questions</span>
       </button>`;
 
@@ -1290,7 +1482,7 @@
     if (state.flow === "official") {
       grid.innerHTML = missTile + officialTile;
       document.getElementById("hub-title").textContent =
-        "100 random questions · new selection each time";
+        `${officialN} questions · shared set every 10 minutes`;
     } else {
       grid.innerHTML = missTile + quickTile + tiles + fullTile;
     }
@@ -1347,29 +1539,30 @@
     let pool;
     let label;
     if (id === "official100") {
-      pool = pickRandomPool(OFFICIAL_MOCK_SIZE);
-      label = `Official mock (${pool.length} random)`;
       state.context = {
         kind: "official100",
         id: "official100",
         type: "mixed",
-        label,
+        label: "Official mock",
       };
+      // pool chosen in beginFreshSession (shared 10‑min set)
     } else if (id === "full") {
       pool = allQuestions();
       label = "Full bank";
       state.context = { kind: "full", id: "full", type: "mixed", label };
+      state.pool = pool;
     } else if (id === "quick") {
       pool = pickRandomPool(QUICK_MOCK_SIZE);
       label = `Quick mock (${QUICK_MOCK_SIZE} Qs)`;
       state.context = { kind: "quick", id: "quick", type: "mixed", label };
+      state.pool = pool;
     } else {
       const r = QUIZ.rounds.find((x) => x.id === id);
       pool = questionsForRound(id);
       label = `Round ${r.round}: ${r.name}`;
       state.context = { kind: "round", id, type: r.type, label };
+      state.pool = pool;
     }
-    state.pool = pool;
     const mode =
       id === "speed" || state.context.type === "speed" ? "speed" : "contest";
     startSession(mode);
@@ -1470,9 +1663,18 @@
     state.answerLog = [];
     state.lastLogIndex = -1;
 
-    if (state.context?.kind === "official100")
-      state.pool = pickRandomPool(OFFICIAL_MOCK_SIZE);
-    else if (state.context?.kind === "full") state.pool = allQuestions();
+    if (state.context?.kind === "official100") {
+      // New start / restart → bump attempt and take the shared set for that attempt
+      const picked = pickOfficialPool();
+      state.pool = picked.pool;
+      state.context = {
+        ...state.context,
+        label: picked.label,
+        windowId: picked.windowId,
+        attempt: picked.attempt,
+        seed: picked.seed,
+      };
+    } else if (state.context?.kind === "full") state.pool = allQuestions();
     else if (state.context?.kind === "quick")
       state.pool = pickRandomPool(QUICK_MOCK_SIZE);
     else if (state.context?.kind === "round")
@@ -1488,13 +1690,6 @@
       state.context?.kind !== "quick"
     ) {
       state.pool = prioritizeMisses(state.pool);
-    } else {
-      // already a fresh random slice
-      state.pool = state.pool;
-    }
-
-    if (state.context?.kind === "official100") {
-      state.context.label = `Official mock (${state.pool.length} random)`;
     }
 
     document.getElementById("score-pill").textContent = "0";
@@ -2229,7 +2424,7 @@
 
     document.getElementById("coach-person-summary").innerHTML = renderSummaryCards([
       { value: `${best}%`, label: "Best score" },
-      { value: `${avg}%`, label: "Average" },
+      { value: `${avg}%`, label: "Overall average" },
       {
         value: sessions.filter((s) => s.kind === "official_mock").length,
         label: "Official mocks",
@@ -2241,9 +2436,71 @@
       { value: wrongAll.length, label: "Wrong answers (all)" },
     ]);
 
+    // Averages by session kind
+    const byKind = {};
+    sessions.forEach((s) => {
+      if (!byKind[s.kind]) byKind[s.kind] = { kind: s.kind, sum: 0, n: 0, best: 0 };
+      const p = pctOf(s.score, s.total);
+      byKind[s.kind].sum += p;
+      byKind[s.kind].n += 1;
+      byKind[s.kind].best = Math.max(byKind[s.kind].best, p);
+    });
+    const kindRows = Object.values(byKind).sort((a, b) => b.n - a.n);
+    document.getElementById("coach-person-averages").innerHTML = kindRows.length
+      ? `<table class="coach-table">
+        <thead><tr><th>Type</th><th>Runs</th><th>Average</th><th>Best</th></tr></thead>
+        <tbody>
+          ${kindRows
+            .map((k) => {
+              const a = Math.round(k.sum / k.n);
+              return `<tr>
+              <td>${kindBadge(k.kind)}</td>
+              <td>${k.n}</td>
+              <td><strong>${a}%</strong></td>
+              <td>${k.best}%</td>
+            </tr>`;
+            })
+            .join("")}
+        </tbody>
+      </table>`
+      : `<p class="coach-empty">No scored sessions yet.</p>`;
+
+    // Topic gaps for this person
+    const topics = {};
+    answers.forEach((a) => {
+      const t = a.topic || "Untagged";
+      if (!topics[t]) topics[t] = { topic: t, correct: 0, total: 0, wrong: 0 };
+      topics[t].total += 1;
+      if (a.is_correct) topics[t].correct += 1;
+      else topics[t].wrong += 1;
+    });
+    const gapRows = Object.values(topics)
+      .map((t) => ({
+        ...t,
+        pct: t.total ? Math.round((t.correct / t.total) * 100) : 0,
+      }))
+      .sort((a, b) => a.pct - b.pct || b.wrong - a.wrong);
+    document.getElementById("coach-person-gaps").innerHTML = gapRows.length
+      ? `<table class="coach-table">
+        <thead><tr><th>Topic</th><th>Accuracy</th><th>Wrong</th><th>Attempts</th></tr></thead>
+        <tbody>
+          ${gapRows
+            .map(
+              (t) => `<tr>
+              <td>${escapeHtml(t.topic)}</td>
+              <td><strong>${t.pct}%</strong></td>
+              <td>${t.wrong}</td>
+              <td>${t.total}</td>
+            </tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>`
+      : `<p class="coach-empty">No answer-level data yet.</p>`;
+
     document.getElementById("coach-person-sessions").innerHTML = sessions.length
       ? `<table class="coach-table coach-table-click">
-        <thead><tr><th>When</th><th>Type</th><th>Set</th><th>Score</th><th>Wrong</th><th>Time</th></tr></thead>
+        <thead><tr><th>When</th><th>Type</th><th>Quiz / set</th><th>Score</th><th>%</th><th>Wrong</th><th>Time</th></tr></thead>
         <tbody>
           ${sessions
             .map((s) => {
@@ -2257,7 +2514,8 @@
                 <td>${escapeHtml(new Date(s.finished_at).toLocaleString())}</td>
                 <td>${kindBadge(s.kind)}</td>
                 <td>${escapeHtml(s.label || s.round_id || "—")}</td>
-                <td><strong>${s.score}/${s.total}</strong> <span class="muted">(${pct}%)</span></td>
+                <td><strong>${s.score}/${s.total}</strong></td>
+                <td>${pct}%</td>
                 <td>${wrong}</td>
                 <td>${formatTime(s.elapsed_sec || 0)}</td>
               </tr>`;
@@ -2274,11 +2532,30 @@
       const wrong = answers
         .filter((a) => a.session_id === state.coachSessionId && !a.is_correct)
         .sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+      const sessAnswers = answers.filter((a) => a.session_id === state.coachSessionId);
+      const sessTopics = {};
+      sessAnswers.forEach((a) => {
+        const t = a.topic || "Untagged";
+        if (!sessTopics[t]) sessTopics[t] = { topic: t, wrong: 0, total: 0 };
+        sessTopics[t].total += 1;
+        if (!a.is_correct) sessTopics[t].wrong += 1;
+      });
+      const sessGap = Object.values(sessTopics)
+        .filter((t) => t.wrong > 0)
+        .sort((a, b) => b.wrong - a.wrong);
       detail.classList.remove("is-hidden");
       document.getElementById("coach-session-title").textContent = sess
-        ? `Wrong answers · ${kindLabel(sess.kind)} · ${sess.score}/${sess.total}`
-        : "Wrong answers";
-      missesEl.innerHTML = renderWrongAnswerList(wrong);
+        ? `Detail · ${kindLabel(sess.kind)} · ${sess.score}/${sess.total} (${pctOf(sess.score, sess.total)}%)`
+        : "Session detail";
+      missesEl.innerHTML = `
+        ${
+          sessGap.length
+            ? `<p class="section-hint">Gaps this quiz: ${sessGap
+                .map((t) => `${escapeHtml(t.topic)} (${t.wrong})`)
+                .join(" · ")}</p>`
+            : `<p class="section-hint">No topic gaps — clean run.</p>`
+        }
+        ${renderWrongAnswerList(wrong)}`;
     } else {
       detail.classList.add("is-hidden");
       missesEl.innerHTML = "";
