@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>COS Drill · Inter-Departmental Quiz Practice</title>
+    <meta
+      name="description"
+      content="Practice drills for the College of Science Inter-Departmental Quiz — KNUST 2026"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Unbounded:wght@500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="grain" aria-hidden="true"></div>
+
+    <!-- HOME -->
+    <section id="view-home" class="view view-home is-active">
+      <header class="topbar">
+        <span class="topbar-mark">COS</span>
+        <span class="topbar-meta">KNUST · 2026</span>
+      </header>
+
+      <div class="hero">
+        <div class="hero-copy">
+          <p class="brand">College of Science</p>
+          <h1>Drill for the Inter-Departmental Quiz</h1>
+          <p class="lede">
+            51 questions across four rounds. Practice until the answers stick.
+          </p>
+          <div class="hero-actions">
+            <button class="btn btn-primary" data-action="start-hub">
+              Start practicing
+            </button>
+            <button class="btn btn-ghost" data-action="full-mock">
+              Full mock · 51 Qs
+            </button>
+          </div>
+        </div>
+        <div class="hero-visual" aria-hidden="true">
+          <div class="orbit">
+            <span class="orbit-ring"></span>
+            <span class="orbit-ring delay"></span>
+            <div class="orbit-core">
+              <span class="orbit-num">51</span>
+              <span class="orbit-label">questions</span>
+            </div>
+          </div>
+          <ul class="hero-rounds">
+            <li><em>12</em> Fundamentals</li>
+            <li><em>8</em> Speed Race</li>
+            <li><em>24</em> True / False</li>
+            <li><em>7</em> Riddles</li>
+          </ul>
+        </div>
+      </div>
+
+      <footer class="home-foot">
+        <p>
+          Topics: History of KNUST · Maths · Campus Locations · History of COS
+        </p>
+      </footer>
+    </section>
+
+    <!-- HUB -->
+    <section id="view-hub" class="view view-hub">
+      <header class="bar">
+        <button class="icon-btn" data-action="go-home" aria-label="Home">
+          ←
+        </button>
+        <div class="bar-title">
+          <span class="bar-eyebrow">Practice hub</span>
+          <strong>Choose a round</strong>
+        </div>
+        <button class="btn btn-sm btn-ghost" data-action="full-mock">
+          Full mock
+        </button>
+      </header>
+
+      <div class="hub-grid" id="hub-grid"></div>
+
+      <div class="hub-topics">
+        <h2>Or drill by topic</h2>
+        <div class="topic-chips" id="topic-chips"></div>
+      </div>
+    </section>
+
+    <!-- MODE PICK -->
+    <section id="view-mode" class="view view-mode">
+      <header class="bar">
+        <button class="icon-btn" data-action="go-hub" aria-label="Back">
+          ←
+        </button>
+        <div class="bar-title">
+          <span class="bar-eyebrow" id="mode-eyebrow">Round</span>
+          <strong id="mode-title">Mode</strong>
+        </div>
+        <span class="bar-count" id="mode-count"></span>
+      </header>
+
+      <div class="mode-body">
+        <p class="mode-desc" id="mode-desc"></p>
+        <div class="mode-cards" id="mode-cards"></div>
+      </div>
+    </section>
+
+    <!-- PRACTICE -->
+    <section id="view-practice" class="view view-practice">
+      <header class="bar practice-bar">
+        <button class="icon-btn" data-action="exit-practice" aria-label="Exit">
+          ←
+        </button>
+        <div class="progress-wrap">
+          <div class="progress-meta">
+            <span id="progress-label">Q 1 / 12</span>
+            <span id="timer" class="timer is-hidden">0:00</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" id="progress-fill"></div>
+          </div>
+        </div>
+        <span class="score-pill" id="score-pill">0</span>
+      </header>
+
+      <div class="practice-stage" id="practice-stage">
+        <p class="q-topic" id="q-topic"></p>
+        <h2 class="q-text" id="q-text"></h2>
+
+        <div class="q-input-area" id="q-input-area"></div>
+
+        <div class="reveal-panel is-hidden" id="reveal-panel">
+          <p class="reveal-label" id="reveal-label">Answer</p>
+          <p class="reveal-answer" id="reveal-answer"></p>
+          <p class="reveal-explain is-hidden" id="reveal-explain"></p>
+        </div>
+
+        <div class="practice-actions" id="practice-actions"></div>
+      </div>
+    </section>
+
+    <!-- RESULTS -->
+    <section id="view-results" class="view view-results">
+      <div class="results-card">
+        <p class="results-eyebrow">Session complete</p>
+        <h2 id="results-title">Nice work</h2>
+        <p class="results-score">
+          <span id="results-score">0</span>
+          <span class="results-of">/ <span id="results-total">0</span></span>
+        </p>
+        <p class="results-pct" id="results-pct"></p>
+        <p class="results-time is-hidden" id="results-time"></p>
+        <div class="results-actions">
+          <button class="btn btn-primary" data-action="retry">Try again</button>
+          <button class="btn btn-ghost" data-action="go-hub">
+            Back to rounds
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <script src="data.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
