@@ -31,14 +31,14 @@
           <p class="brand">College of Science</p>
           <h1>Drill for the Inter-Departmental Quiz</h1>
           <p class="lede">
-            51 questions across four rounds. Practice until the answers stick.
+            Run trials to pick the team — or study the full question bank on your own.
           </p>
           <div class="hero-actions">
-            <button class="btn btn-primary" data-action="start-hub">
-              Start practicing
+            <button class="btn btn-primary" data-action="start-select">
+              Team selection
             </button>
-            <button class="btn btn-ghost" data-action="full-mock">
-              Full mock · 51 Qs
+            <button class="btn btn-ghost" data-action="start-study">
+              Study mode
             </button>
           </div>
         </div>
@@ -47,15 +47,15 @@
             <span class="orbit-ring"></span>
             <span class="orbit-ring delay"></span>
             <div class="orbit-core">
-              <span class="orbit-num">51</span>
+              <span class="orbit-num" id="hero-total">92</span>
               <span class="orbit-label">questions</span>
             </div>
           </div>
-          <ul class="hero-rounds">
-            <li><em>12</em> Fundamentals</li>
-            <li><em>8</em> Speed Race</li>
-            <li><em>24</em> True / False</li>
-            <li><em>7</em> Riddles</li>
+          <ul class="hero-rounds" id="hero-rounds">
+            <li><em>24</em> Fundamentals</li>
+            <li><em>16</em> Speed Race</li>
+            <li><em>36</em> True / False</li>
+            <li><em>16</em> Riddles</li>
           </ul>
         </div>
       </div>
@@ -67,30 +67,71 @@
       </footer>
     </section>
 
-    <!-- HUB -->
-    <section id="view-hub" class="view view-hub">
+    <!-- NAME ENTRY (team selection) -->
+    <section id="view-name" class="view view-name">
       <header class="bar">
         <button class="icon-btn" data-action="go-home" aria-label="Home">
           ←
         </button>
         <div class="bar-title">
-          <span class="bar-eyebrow">Practice hub</span>
-          <strong>Choose a round</strong>
+          <span class="bar-eyebrow">Team selection</span>
+          <strong>Who is trying out?</strong>
         </div>
-        <button class="btn btn-sm btn-ghost" data-action="full-mock">
-          Full mock
+        <button class="btn btn-sm btn-ghost" data-action="show-board">
+          Scores
         </button>
       </header>
 
+      <div class="name-body">
+        <label class="field-label" for="player-name">Participant name</label>
+        <input
+          id="player-name"
+          class="answer-field name-field"
+          type="text"
+          placeholder="e.g. Ama Mensah"
+          autocomplete="name"
+          maxlength="48"
+        />
+        <p class="name-hint">
+          They type their own answers. Scores are saved so you can compare
+          everyone.
+        </p>
+        <button class="btn btn-primary" data-action="confirm-name" id="btn-confirm-name">
+          Continue
+        </button>
+      </div>
+    </section>
+
+    <!-- HUB -->
+    <section id="view-hub" class="view view-hub">
+      <header class="bar">
+        <button class="icon-btn" data-action="hub-back" aria-label="Back">
+          ←
+        </button>
+        <div class="bar-title">
+          <span class="bar-eyebrow" id="hub-eyebrow">Practice hub</span>
+          <strong id="hub-title">Choose a round</strong>
+        </div>
+        <button
+          class="btn btn-sm btn-ghost is-hidden"
+          id="hub-board-btn"
+          data-action="show-board"
+        >
+          Scores
+        </button>
+      </header>
+
+      <p class="hub-player is-hidden" id="hub-player"></p>
+
       <div class="hub-grid" id="hub-grid"></div>
 
-      <div class="hub-topics">
+      <div class="hub-topics" id="hub-topics-wrap">
         <h2>Or drill by topic</h2>
         <div class="topic-chips" id="topic-chips"></div>
       </div>
     </section>
 
-    <!-- MODE PICK -->
+    <!-- MODE PICK (study only) -->
     <section id="view-mode" class="view view-mode">
       <header class="bar">
         <button class="icon-btn" data-action="go-hub" aria-label="Back">
@@ -118,6 +159,7 @@
         <div class="progress-wrap">
           <div class="progress-meta">
             <span id="progress-label">Q 1 / 12</span>
+            <span id="player-chip" class="player-chip is-hidden"></span>
             <span id="timer" class="timer is-hidden">0:00</span>
           </div>
           <div class="progress-track">
@@ -146,7 +188,7 @@
     <!-- RESULTS -->
     <section id="view-results" class="view view-results">
       <div class="results-card">
-        <p class="results-eyebrow">Session complete</p>
+        <p class="results-eyebrow" id="results-eyebrow">Session complete</p>
         <h2 id="results-title">Nice work</h2>
         <p class="results-score">
           <span id="results-score">0</span>
@@ -155,11 +197,50 @@
         <p class="results-pct" id="results-pct"></p>
         <p class="results-time is-hidden" id="results-time"></p>
         <div class="results-actions">
-          <button class="btn btn-primary" data-action="retry">Try again</button>
-          <button class="btn btn-ghost" data-action="go-hub">
+          <button class="btn btn-primary" data-action="retry" id="btn-retry">
+            Try again
+          </button>
+          <button
+            class="btn btn-ghost is-hidden"
+            data-action="next-contestant"
+            id="btn-next-contestant"
+          >
+            Next contestant
+          </button>
+          <button class="btn btn-ghost" data-action="show-board" id="btn-view-board">
+            View leaderboard
+          </button>
+          <button class="btn btn-ghost" data-action="go-hub" id="btn-results-hub">
             Back to rounds
           </button>
         </div>
+      </div>
+    </section>
+
+    <!-- LEADERBOARD -->
+    <section id="view-board" class="view view-board">
+      <header class="bar">
+        <button class="icon-btn" data-action="board-back" aria-label="Back">
+          ←
+        </button>
+        <div class="bar-title">
+          <span class="bar-eyebrow">Team selection</span>
+          <strong>Leaderboard</strong>
+        </div>
+        <button class="btn btn-sm btn-ghost" data-action="clear-board">
+          Clear
+        </button>
+      </header>
+
+      <div class="board-body">
+        <p class="board-empty is-hidden" id="board-empty">
+          No trials yet. Start team selection and run a contestant through a
+          round.
+        </p>
+        <ol class="board-list" id="board-list"></ol>
+        <button class="btn btn-primary" data-action="start-select">
+          New contestant
+        </button>
       </div>
     </section>
 
