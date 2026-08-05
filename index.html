@@ -24,6 +24,14 @@
       <header class="topbar">
         <span class="topbar-mark">COS</span>
         <div class="topbar-right">
+          <button
+            class="btn btn-sm btn-ghost"
+            id="btn-theme"
+            data-action="toggle-theme"
+            aria-label="Toggle light mode"
+          >
+            Light
+          </button>
           <button class="btn btn-sm btn-ghost is-hidden" id="btn-my-progress" data-action="my-progress">
             My progress
           </button>
@@ -320,7 +328,7 @@
 
     <!-- RESULTS -->
     <section id="view-results" class="view view-results">
-      <div class="results-card">
+      <div class="results-card results-card-wide">
         <p class="results-eyebrow" id="results-eyebrow">Session complete</p>
         <h2 id="results-title">Nice work</h2>
         <p class="results-score">
@@ -330,8 +338,24 @@
         <p class="results-pct" id="results-pct"></p>
         <p class="results-time is-hidden" id="results-time"></p>
         <p class="results-sync is-hidden" id="results-sync"></p>
+
+        <div class="summary-stats is-hidden" id="summary-stats">
+          <div class="summary-stat">
+            <em id="stat-correct">0</em>
+            <span>Correct</span>
+          </div>
+          <div class="summary-stat">
+            <em id="stat-wrong">0</em>
+            <span>Wrong</span>
+          </div>
+          <div class="summary-stat">
+            <em id="stat-pct">0%</em>
+            <span>Score</span>
+          </div>
+        </div>
+
         <div class="results-misses is-hidden" id="results-misses">
-          <p class="results-misses-label">Missed this round</p>
+          <p class="results-misses-label">Review what you got wrong</p>
           <ul id="results-miss-list"></ul>
         </div>
         <div class="results-actions">
@@ -492,6 +516,8 @@
     <script src="config.js"></script>
     <script src="supabaseClient.js"></script>
     <script src="data.js"></script>
+    <!-- Free open-source MiniLM scorer (browser) — helps paraphrase / list answers -->
+    <script type="module" src="semanticScorer.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

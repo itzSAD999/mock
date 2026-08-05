@@ -222,72 +222,346 @@
     updateAuthUI();
   }
 
-  /* ——— ANSWER MATCHING ——— */
+  /* ——— SMART ANSWER MATCHING (partial / related OK) ——— */
   function normalize(str) {
     return String(str || "")
       .toLowerCase()
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
+      .replace(/&/g, " and ")
       .replace(/[^a-z0-9\s]/g, " ")
       .replace(/\s+/g, " ")
       .trim();
   }
 
+  /** Same idea, different wording — strip filler + map common rewrites. */
+  function softNormalize(str) {
+    let s = normalize(str);
+    s = s
+      .replace(
+        /^(the\s+)?(answer\s+is|it\s+is|its|it\s+s|called|known\s+as|i\s+think|i\s+believe|maybe|perhaps)\s+/g,
+        ""
+      )
+      .replace(/\b(called|known\s+as|also\s+known\s+as)\b/g, " ");
+
+    const swaps = [
+      [/\bprofessor\b/g, "prof"],
+      [/\bvice[\s-]?chancellor\b/g, "vc"],
+      [/\bkwame nkrumah university of science and technology\b/g, "knust"],
+      [/\bkumasi college of technology\b/g, "kct"],
+      [/\buniversity\s+hall\b/g, "katanga"],
+      [/\bkatanga\s+hall\b/g, "katanga"],
+      [/\bqueen\s+elizabeth(\s+ii)?(\s+hall)?\b/g, "queenelizabeth"],
+      [/\bafrica\s+hall\b/g, "africa"],
+      [/\bunity\s+hall\b/g, "unity"],
+      [/\bindependence\s+hall\b/g, "independence"],
+      [/\brepublic\s+hall\b/g, "republic"],
+      [/\badministration\s+(block|building|office|offices)\b/g, "admin"],
+      [/\badmin\s+(block|building)\b/g, "admin"],
+      [/\badministration\b/g, "admin"],
+      [/\bcarbon dioxide\b/g, "co2"],
+      [/\bco 2\b/g, "co2"],
+      [/\bcolour\b/g, "color"],
+      [/\bcolours\b/g, "colors"],
+      [/\bdegrees?\b/g, ""],
+      [/\bapproximately\b/g, ""],
+      [/\babout\b/g, ""],
+      [/\bofficially\b/g, ""],
+      [/\btransferred\b/g, ""],
+      [/\bstudents?\b/g, ""],
+      [/\bcolleges?\b/g, ""],
+      [/\bbuilding\b/g, ""],
+      [/\bblock\b/g, ""],
+      [/\blibrary\b/g, ""],
+      [/\bhalls?\b/g, ""],
+      [/\bcollege of science\b/g, "cos"],
+      [/\bfaculty of\b/g, ""],
+      [/\bdepartment of\b/g, ""],
+      [/\band\b/g, " "],
+      [/\bthe\b/g, ""],
+      [/\ba\b/g, ""],
+      [/\ban\b/g, ""],
+    ];
+    swaps.forEach(([re, to]) => {
+      s = s.replace(re, to);
+    });
+    return s.replace(/\s+/g, " ").trim();
+  }
+
+  const WORD_ALIASES = {
+    gold: "au",
+    newton: "n",
+    water: "h2o",
+    h2o: "h2o",
+    co2: "co2",
+    carbon: "co2",
+    dioxide: "co2",
+    admin: "admin",
+    prempeh: "prempeh",
+    baffour: "baffour",
+    dickson: "dickson",
+    rita: "rita",
+    watson: "watson",
+    achimota: "achimota",
+    ashanti: "ashanti",
+    kumasi: "kumasi",
+    university: "katanga",
+    katanga: "katanga",
+    maths: "mathematic",
+    math: "mathematic",
+    mathematics: "mathematic",
+    queenelizabeth: "queenelizabeth",
+    elizabeth: "queenelizabeth",
+    queens: "queenelizabeth",
+  };
+
+  function canonToken(t) {
+    const x = WORD_ALIASES[t] || t;
+    if (x.endsWith("ies") && x.length > 4) return x.slice(0, -3) + "y";
+    if (x.endsWith("es") && x.length > 4) return x.slice(0, -2);
+    if (x.endsWith("s") && x.length > 3) return x.slice(0, -1);
+    return x;
+  }
+
   function tokens(str) {
     const stop = new Set([
       "a", "an", "the", "of", "and", "or", "in", "on", "at", "to", "for",
-      "from", "by", "is", "was", "were", "are", "any", "two", "with",
+      "from", "by", "is", "was", "were", "are", "any", "two", "with", "its",
+      "that", "this", "as", "be", "been", "being", "also", "after", "before",
+      "under", "over", "into", "their", "they", "you", "your", "name",
+      "value", "equal", "equals", "answer", "correct", "should", "would",
+      "where", "what", "who", "which", "when", "how", "many", "much",
+      "ii", "i",
     ]);
-    return normalize(str)
+    return softNormalize(str)
       .split(" ")
-      .filter((t) => t.length > 1 && !stop.has(t));
+      .filter((t) => t.length > 1 && !stop.has(t))
+      .map(canonToken);
   }
 
+  function editDistance(a, b) {
+    if (a === b) return 0;
+    if (!a.length) return b.length;
+    if (!b.length) return a.length;
+    const m = [];
+    for (let i = 0; i <= b.length; i++) m[i] = [i];
+    for (let j = 0; j <= a.length; j++) m[0][j] = j;
+    for (let i = 1; i <= b.length; i++) {
+      for (let j = 1; j <= a.length; j++) {
+        m[i][j] =
+          b.charAt(i - 1) === a.charAt(j - 1)
+            ? m[i - 1][j - 1]
+            : Math.min(m[i - 1][j - 1], m[i][j - 1], m[i - 1][j]) + 1;
+      }
+    }
+    return m[b.length][a.length];
+  }
+
+  function similarWord(u, k) {
+    if (u === k) return true;
+    const cu = canonToken(u);
+    const ck = canonToken(k);
+    if (cu === ck) return true;
+    if (cu.length >= 3 && ck.length >= 3 && (ck.includes(cu) || cu.includes(ck))) return true;
+    if (cu.length >= 4 && ck.length >= 4) {
+      const maxLen = Math.max(cu.length, ck.length);
+      const minLen = Math.min(cu.length, ck.length);
+      if (Math.abs(cu.length - ck.length) > 4) return false;
+      const dist = editDistance(cu, ck);
+      if (dist <= 1) return true;
+      if (dist <= 2 && maxLen >= 5) return true;
+      if (dist <= 3 && maxLen >= 6) return true;
+      // messy typos: kantge ≈ katanga (same first letters)
+      if (
+        maxLen >= 6 &&
+        minLen >= 5 &&
+        cu.slice(0, 2) === ck.slice(0, 2) &&
+        dist <= Math.max(3, Math.floor(maxLen * 0.6))
+      ) {
+        return true;
+      }
+      if (maxLen >= 6 && cu.slice(0, 4) === ck.slice(0, 4) && dist <= 4) return true;
+    }
+    return false;
+  }
+
+  function coversMeaning(userToks, keyToks) {
+    if (!keyToks.length) return false;
+    const hits = keyToks.filter((k) => userToks.some((u) => similarWord(u, k)));
+    const ratio = hits.length / keyToks.length;
+    const strong = hits.filter((h) => h.length >= 4);
+
+    if (keyToks.length === 1) return hits.length === 1;
+    if (keyToks.length === 2) return hits.length >= 1 && (strong.length >= 1 || hits.length === 2);
+    if (keyToks.length <= 4) {
+      return hits.length >= Math.ceil(keyToks.length * 0.5) || strong.length >= 2;
+    }
+    return (ratio >= 0.4 && hits.length >= 2) || strong.length >= 2;
+  }
+
+  /** University (Katanga) → matches university OR katanga. */
+  function parseListOption(rawPart) {
+    const raw = String(rawPart || "").trim();
+    if (!raw) return null;
+    const aliases = [];
+    const paren = [...raw.matchAll(/\(([^)]+)\)/g)];
+    paren.forEach((m) => {
+      if (!/^(approx|officially|also|statutes|building|remove|national)/i.test(m[1])) {
+        aliases.push(m[1]);
+      }
+    });
+    const main = raw.replace(/\(.*?\)/g, " ").trim();
+    const labels = [main, ...aliases]
+      .map((x) => softNormalize(x))
+      .filter((x) => x.length > 1);
+    const uniq = [...new Set(labels)];
+    if (!uniq.length) return null;
+    return { labels: uniq, tokens: [...new Set(uniq.flatMap((l) => tokens(l)))] };
+  }
+
+  function optionMentioned(userRaw, userToks, option) {
+    if (!option) return false;
+    const user = softNormalize(userRaw);
+    for (const label of option.labels) {
+      if (label.length >= 3 && (user.includes(label) || label.includes(user))) return true;
+    }
+    if (option.tokens.some((ot) => userToks.some((ut) => similarWord(ut, ot)))) return true;
+    const distinctive = [...option.tokens].sort((a, b) => b.length - a.length)[0];
+    if (distinctive && distinctive.length >= 5) {
+      if (userToks.some((ut) => similarWord(ut, distinctive))) return true;
+    }
+    return false;
+  }
+
+  function answerVariants(rawAnswer) {
+    let a = String(rawAnswer || "");
+    a = a.split(/\s+[—–]\s+|;\s*remove\b|\(remove\b/i)[0];
+    const variants = [a];
+
+    const anyOf = a.match(/any\s+(?:two|three|\d+)\s+of[:\s]+(.+)/i);
+    if (anyOf) {
+      const options = anyOf[1]
+        .split(/;|,/)
+        .map((x) => parseListOption(x))
+        .filter(Boolean);
+      options.forEach((opt) => opt.labels.forEach((l) => variants.push(l)));
+      variants._anyOfOptions = options;
+      const needMatch = a.match(/any\s+(\d+|two|three)\s+of/i);
+      let need = 2;
+      if (needMatch) {
+        const n = needMatch[1].toLowerCase();
+        need = n === "two" ? 2 : n === "three" ? 3 : parseInt(n, 10) || 2;
+      }
+      variants._anyOfNeed = need;
+    }
+
+    a.split(/\bor\b|\//i)
+      .map((x) => x.trim())
+      .filter((x) => x.length > 1)
+      .forEach((part) => variants.push(part));
+
+    const paren = [...String(rawAnswer).matchAll(/\(([^)]+)\)/g)];
+    paren.forEach((m) => {
+      if (!/^(approx|officially|also|statutes|building|remove|national)/i.test(m[1])) {
+        variants.push(m[1]);
+      }
+    });
+
+    const out = [...new Set(variants.map((v) => softNormalize(v)).filter(Boolean))];
+    if (variants._anyOfOptions) {
+      out._anyOfOptions = variants._anyOfOptions;
+      out._anyOfNeed = variants._anyOfNeed;
+    }
+    return out;
+  }
+
+  /** Fast rule-based check (sync). */
   function checkAnswer(userRaw, q) {
-    const user = normalize(userRaw);
+    const user = softNormalize(userRaw);
     if (!user) return false;
 
     if (q.type === "tf") {
-      const correct = normalize(q.a).startsWith("true") ? "true" : "false";
-      if (user === "t" || user === "true" || user === "yes") return correct === "true";
-      if (user === "f" || user === "false" || user === "no") return correct === "false";
-      return user === correct;
+      const correct = softNormalize(q.a).startsWith("true") ? "true" : "false";
+      if (/^(t|true|yes|y|correct)$/.test(user)) return correct === "true";
+      if (/^(f|false|no|n|wrong|incorrect)$/.test(user)) return correct === "false";
+      return user === correct || softNormalize(q.a).startsWith(user);
     }
 
-    const answer = normalize(q.a);
-    const core = answer.replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
+    const variants = answerVariants(q.a);
+    const userToks = tokens(userRaw);
 
-    if (user === answer || user === core) return true;
-    if (answer.includes(user) && user.length >= 3) return true;
-    if (core.includes(user) && user.length >= 3) return true;
+    // Any-two/three lists: need enough DIFFERENT options (Unity + Katanga = correct)
+    if (variants._anyOfOptions && variants._anyOfOptions.length) {
+      const need = variants._anyOfNeed || 2;
+      const hitOpts = variants._anyOfOptions.filter((opt) =>
+        optionMentioned(userRaw, userToks, opt)
+      );
+      return hitOpts.length >= need;
+    }
 
-    const userNums = user.match(/-?\d+(\.\d+)?/g);
-    const ansNums = (core || answer).match(/-?\d+(\.\d+)?/g);
-    if (userNums && ansNums && userNums.length === 1 && ansNums[0] === userNums[0]) {
-      const ansWords = tokens(core);
-      if (
-        ansWords.length <= 2 ||
-        /^x\s*=/.test(core) ||
-        ansWords.every((w) => /^\d/.test(w) || w === "degrees" || w === "x")
-      ) {
+    for (const v of variants) {
+      if (!v || typeof v !== "string") continue;
+      if (user === v) return true;
+      if (user.length >= 3 && (v.includes(user) || user.includes(v))) return true;
+      if (coversMeaning(userToks, tokens(v))) return true;
+    }
+
+    const userNums = user.match(/-?\d+(\.\d+)?/g) || [];
+    const ansNums = softNormalize(q.a).match(/-?\d+(\.\d+)?/g) || [];
+    if (userNums.length && ansNums.length) {
+      const ansSet = new Set(ansNums);
+      const matched = userNums.filter((n) => ansSet.has(n));
+      if (matched.length >= 1 && (ansNums.length <= 2 || matched.length >= Math.ceil(ansNums.length * 0.5))) {
+        if (matched.some((n) => n.length >= 2 || Number(n) >= 10) || userToks.length <= 3) {
+          return true;
+        }
+      }
+      if (userNums.length === 1 && ansNums[0] === userNums[0] && userToks.length <= 4) {
         return true;
       }
     }
 
-    const key = tokens(core.length > 2 ? core : answer);
-    if (key.length === 0) return false;
-    const userToks = new Set(tokens(user));
-    const hits = key.filter((k) => {
-      if (userToks.has(k)) return true;
-      for (const u of userToks) {
-        if (u.length >= 4 && (k.includes(u) || u.includes(k))) return true;
+    const key = tokens(variants[0] || q.a);
+    return coversMeaning(userToks, key);
+  }
+
+  /** Rule match first; if unsure, MiniLM semantic similarity (free, in-browser). */
+  async function checkAnswerSmart(userRaw, q) {
+    if (checkAnswer(userRaw, q)) return true;
+
+    const sem = window.CosSemantic;
+    if (!sem) return false;
+
+    try {
+      const ready = await sem.ensureReady();
+      if (!ready) return false;
+
+      const variants = answerVariants(q.a);
+
+      if (variants._anyOfOptions?.length) {
+        return sem.matchesAnyOfList(
+          userRaw,
+          variants._anyOfOptions,
+          variants._anyOfNeed || 2
+        );
       }
+
+      const candidates = [
+        q.a,
+        ...variants.filter((v) => typeof v === "string"),
+      ].filter(Boolean);
+
+      return sem.matchesAny(userRaw, candidates);
+    } catch (err) {
+      console.warn("Semantic scoring skipped", err);
       return false;
-    });
-    const ratio = hits.length / key.length;
-    if (key.length <= 2) return hits.length === key.length;
-    if (key.length <= 4) return hits.length >= Math.ceil(key.length * 0.7);
-    return ratio >= 0.6 && hits.length >= 2;
+    }
+  }
+
+  function warmSemanticModel() {
+    const sem = window.CosSemantic;
+    if (!sem || sem.isReady()) return;
+    sem.ensureReady().catch(() => {});
   }
 
   /* ——— ANSWER LOG ——— */
@@ -300,6 +574,8 @@
       topic: q.topic || null,
       round_id: q.roundId || null,
       user_answer: userAnswer ?? "",
+      correct_answer: q.a || "",
+      question_text: q.q || "",
       is_correct: Boolean(isCorrect),
       marked_override: Boolean(markedOverride),
       time_ms: timeMs,
@@ -689,6 +965,15 @@
       )
       .join("");
 
+    const QUICK_SIZE = 20;
+    const quickTile = `
+      <button class="round-tile round-tile-quick" data-round="quick">
+        <div class="rt-num">Quick mock</div>
+        <h3>Quick mock</h3>
+        <p>Random mix of ${QUICK_SIZE} questions — fast score + wrong-answer review at the end.</p>
+        <span class="rt-count">${QUICK_SIZE} questions</span>
+      </button>`;
+
     const fullTile = `
       <button class="round-tile round-tile-full" data-round="full">
         <div class="rt-num">${tracked ? "Full set" : "All rounds"}</div>
@@ -697,7 +982,7 @@
         <span class="rt-count">${QUIZ.totalQuestions} questions</span>
       </button>`;
 
-    grid.innerHTML = missTile + tiles + fullTile;
+    grid.innerHTML = missTile + quickTile + tiles + fullTile;
 
     grid.querySelectorAll("[data-round]").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -709,8 +994,8 @@
         }
         if (tracked) {
           beginTrackedTrial(id);
-        } else if (id === "full") {
-          openModePicker("full");
+        } else if (id === "full" || id === "quick") {
+          openModePicker(id === "quick" ? "quick" : "full");
         } else {
           openModePicker("round", id);
         }
@@ -754,6 +1039,10 @@
       pool = allQuestions();
       label = "Full mock";
       state.context = { kind: "full", id: "full", type: "mixed", label };
+    } else if (id === "quick") {
+      pool = shuffle(allQuestions()).slice(0, 20);
+      label = "Quick mock (20 Qs)";
+      state.context = { kind: "quick", id: "quick", type: "mixed", label };
     } else {
       const r = QUIZ.rounds.find((x) => x.id === id);
       pool = questionsForRound(id);
@@ -852,6 +1141,8 @@
     state.lastLogIndex = -1;
 
     if (state.context?.kind === "full") state.pool = allQuestions();
+    else if (state.context?.kind === "quick")
+      state.pool = shuffle(allQuestions()).slice(0, 20);
     else if (state.context?.kind === "round")
       state.pool = questionsForRound(state.context.id);
     else if (state.context?.kind === "topic")
@@ -893,6 +1184,7 @@
     }
 
     show("practice");
+    warmSemanticModel();
     renderQuestion();
   }
 
@@ -946,7 +1238,7 @@
           class="answer-field"
           id="answer-input"
           type="text"
-          placeholder="Type your answer…"
+          placeholder="Same idea, your words — partial OK…"
           autocomplete="off"
           autocapitalize="sentences"
         />`;
@@ -969,7 +1261,7 @@
     actions.querySelector("[data-act=reveal]").addEventListener("click", revealAnswer);
   }
 
-  function submitTyped() {
+  async function submitTyped() {
     if (state.answered) return;
     const input = document.getElementById("answer-input");
     const raw = input ? input.value : "";
@@ -979,10 +1271,22 @@
     }
 
     state.answered = true;
-    const q = currentQ();
-    const ok = checkAnswer(raw, q);
-
     if (input) input.disabled = true;
+
+    const q = currentQ();
+    const actions = document.getElementById("practice-actions");
+    const submitBtn = actions?.querySelector("[data-act=submit]");
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Checking…";
+    }
+
+    let ok = false;
+    try {
+      ok = await checkAnswerSmart(raw, q);
+    } catch {
+      ok = checkAnswer(raw, q);
+    }
 
     if (ok) {
       state.score += 1;
@@ -1152,24 +1456,52 @@
     const missWrap = document.getElementById("results-misses");
     const missList = document.getElementById("results-miss-list");
     const retryMissBtn = document.getElementById("btn-retry-misses");
-    const qMap = Object.fromEntries(allQuestions().map((q) => [q.id, q]));
+    const summaryStats = document.getElementById("summary-stats");
+    const wrongEntries = scored
+      ? state.answerLog.filter((a) => !a.is_correct)
+      : [];
+    const correctCount = scored ? state.answerLog.filter((a) => a.is_correct).length : 0;
 
-    if (state.lastMissIds.length) {
+    if (scored && summaryStats) {
+      summaryStats.classList.remove("is-hidden");
+      document.getElementById("stat-correct").textContent = correctCount;
+      document.getElementById("stat-wrong").textContent = wrongEntries.length;
+      document.getElementById("stat-pct").textContent = `${pct}%`;
+    } else if (summaryStats) {
+      summaryStats.classList.add("is-hidden");
+    }
+
+    if (wrongEntries.length) {
       missWrap.classList.remove("is-hidden");
-      missList.innerHTML = state.lastMissIds
-        .map((id) => {
-          const q = qMap[id];
-          return `<li><strong>${escapeHtml(q?.topic || "")}</strong> — ${escapeHtml(
-            (q?.q || id).slice(0, 100)
-          )}${(q?.q || "").length > 100 ? "…" : ""}</li>`;
+      missList.innerHTML = wrongEntries
+        .map((a) => {
+          const q = allQuestions().find((x) => x.id === a.question_id);
+          const correct = a.correct_answer || q?.a || "—";
+          const qText = a.question_text || q?.q || a.question_id;
+          return `<li class="miss-item">
+            <p class="miss-topic">${escapeHtml(a.topic || q?.topic || "")}</p>
+            <p class="miss-q">${escapeHtml(qText)}</p>
+            <p class="miss-yours"><span>Your answer</span> ${escapeHtml(a.user_answer || "—")}</p>
+            <p class="miss-correct"><span>Correct</span> ${escapeHtml(correct)}</p>
+          </li>`;
         })
         .join("");
       retryMissBtn.classList.remove("is-hidden");
-      retryMissBtn.textContent = `Retry missed (${state.lastMissIds.length})`;
+      retryMissBtn.textContent = `Retry missed (${wrongEntries.length})`;
     } else {
       missWrap.classList.add("is-hidden");
       missList.innerHTML = "";
       retryMissBtn.classList.add("is-hidden");
+    }
+
+    if (scored && state.authUser) {
+      const note = syncEl?.textContent || "";
+      if (syncEl && note && !note.includes("coach")) {
+        syncEl.textContent = `${note} · Visible to coach`;
+      } else if (syncEl && !note) {
+        syncEl.textContent = "Score saved · Visible to coach";
+        syncEl.classList.remove("is-hidden");
+      }
     }
 
     const tracked =
@@ -1651,8 +1983,27 @@
       unlockCoach();
     } else if (action === "coach-refresh") {
       loadCoachDashboard();
+    } else if (action === "toggle-theme") {
+      toggleTheme();
     }
   });
+
+  const THEME_KEY = "cos-quiz-theme";
+
+  function applyTheme(theme) {
+    const t = theme === "light" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", t);
+    localStorage.setItem(THEME_KEY, t);
+    const btn = document.getElementById("btn-theme");
+    if (btn) btn.textContent = t === "light" ? "Dark" : "Light";
+  }
+
+  function toggleTheme() {
+    const cur = document.documentElement.getAttribute("data-theme") || "dark";
+    applyTheme(cur === "light" ? "dark" : "light");
+  }
+
+  applyTheme(localStorage.getItem(THEME_KEY) || "dark");
 
   document.getElementById("player-name").addEventListener("keydown", (e) => {
     if (e.key === "Enter") {

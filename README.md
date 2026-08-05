@@ -34,6 +34,23 @@ Everyone must **Create account** or **Sign in** before practice, official mocks,
 
 `config.js` is gitignored so keys are not committed.
 
+## Smart scoring (free open-source AI)
+
+Answers are checked in two layers:
+
+1. **Rules** — partial text, typos, aliases, “any two of…” lists (instant).
+2. **Semantic model** — if rules say no, a free browser model checks whether the meaning matches.
+
+| | |
+|--|--|
+| **Model** | [`all-MiniLM-L6-v2`](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) (ONNX: `Xenova/all-MiniLM-L6-v2`) |
+| **Library** | [Transformers.js](https://huggingface.co/docs/transformers.js) (`@huggingface/transformers`) |
+| **Cost** | Free — runs **in the visitor’s browser**, no API key |
+| **License** | Apache-2.0 |
+| **Size** | ~23 MB first download (then cached) |
+
+Implementation: [`semanticScorer.js`](semanticScorer.js). If the model fails to load, scoring still works with rules only.
+
 ## Modes
 
 | Mode | Session kind stored | Identity |
