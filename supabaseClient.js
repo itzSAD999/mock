@@ -364,7 +364,7 @@
       const { data: ans, error: ansErr } = await sb
         .from("answers")
         .select(
-          "session_id, question_id, topic, is_correct, marked_override, time_ms"
+          "session_id, question_id, topic, is_correct, marked_override, time_ms, user_answer, order_index"
         )
         .in("session_id", sessionIds);
       if (ansErr) throw ansErr;

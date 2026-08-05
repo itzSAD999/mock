@@ -1283,18 +1283,193 @@ select.answer-field {
   padding-bottom: 3rem;
 }
 
+.coach-status {
+  font-size: 0.85rem;
+  color: var(--text-faint);
+  margin-top: -0.75rem;
+}
+
+.coach-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 1.25rem;
+  align-items: flex-end;
+}
+
 .coach-filters {
   max-width: 280px;
+  flex: 1 1 180px;
+}
+
+.coach-search-wrap {
+  max-width: 320px;
+  flex: 1 1 220px;
 }
 
 .coach-filters .answer-field {
   margin-top: 0.35rem;
 }
 
-.coach-status {
+.section-hint {
   font-size: 0.85rem;
-  color: rgba(255, 255, 255, 0.5);
-  margin-top: -0.75rem;
+  color: var(--text-soft);
+  margin: -0.35rem 0 0.85rem;
+  line-height: 1.4;
+}
+
+.coach-subhead {
+  font-family: var(--font-display);
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin: 1.25rem 0 0.5rem;
+  color: var(--gold);
+}
+
+.score-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.75rem;
+}
+
+.score-card {
+  padding: 0.9rem 1rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  background: var(--card-bg, rgba(255, 255, 255, 0.04));
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.score-card em {
+  font-style: normal;
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.1;
+}
+
+.score-card span {
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.resume-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem 1.25rem;
+  margin-top: 1rem;
+  padding: 1rem 1.15rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--gold);
+  background: var(--gold-soft);
+  max-width: 36rem;
+}
+
+.resume-banner.is-hidden {
+  display: none;
+}
+
+.resume-copy strong {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 0.2rem;
+}
+
+.resume-copy p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-soft);
+  line-height: 1.35;
+}
+
+.resume-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.detail-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.85rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.detail-meta {
+  font-size: 0.85rem;
+  color: var(--text-soft);
+  margin-top: 0.2rem;
+}
+
+.kind-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 0.2rem 0.45rem;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.badge-mock {
+  background: rgba(212, 168, 67, 0.2);
+  color: var(--gold);
+}
+
+.badge-select {
+  background: rgba(96, 165, 250, 0.18);
+  color: var(--blue-300, #7eb6ff);
+}
+
+.badge-practice {
+  background: rgba(52, 211, 153, 0.15);
+  color: #6ee7b7;
+}
+
+html[data-theme="light"] .badge-practice {
+  color: #047857;
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.coach-table-click tbody tr {
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.coach-table-click tbody tr:hover,
+.coach-table-click tbody tr.is-selected {
+  background: rgba(212, 168, 67, 0.1);
+}
+
+.coach-table .muted {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+
+.miss-review-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.miss-review-list .miss-item {
+  padding: 0.9rem 1rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  background: var(--card-bg, rgba(255, 255, 255, 0.03));
 }
 
 .coach-section h2 {
@@ -1308,8 +1483,8 @@ select.answer-field {
 .coach-table-wrap {
   overflow-x: auto;
   border-radius: var(--radius);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  background: var(--card-bg, rgba(255, 255, 255, 0.03));
 }
 
 .coach-table {
@@ -1322,7 +1497,7 @@ select.answer-field {
 .coach-table td {
   padding: 0.65rem 0.75rem;
   text-align: left;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.06));
   white-space: nowrap;
 }
 
@@ -1339,12 +1514,16 @@ select.answer-field {
 }
 
 .coach-table th {
-  color: var(--blue-300);
+  color: var(--blue-300, #7eb6ff);
   font-weight: 600;
   font-size: 0.72rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  background: rgba(0, 0, 0, 0.2);
+  background: rgba(0, 0, 0, 0.12);
+}
+
+html[data-theme="light"] .coach-table th {
+  background: rgba(12, 26, 46, 0.04);
 }
 
 .coach-table tr:last-child td {
@@ -1353,7 +1532,7 @@ select.answer-field {
 
 .coach-empty {
   padding: 1.25rem;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--text-faint);
   font-size: 0.9rem;
 }
 
@@ -1368,5 +1547,9 @@ select.answer-field {
 
   .hero-actions .btn {
     width: 100%;
+  }
+
+  .score-summary-grid {
+    grid-template-columns: repeat(2, 1fr);
   }
 }

@@ -33,7 +33,7 @@
             Light
           </button>
           <button class="btn btn-sm btn-ghost is-hidden" id="btn-my-progress" data-action="my-progress">
-            My progress
+            My scores
           </button>
           <button class="btn btn-sm btn-ghost" id="btn-auth" data-action="open-auth">
             Sign in
@@ -69,11 +69,25 @@
               Team selection
             </button>
             <button class="btn btn-ghost" data-action="my-progress">
-              My progress
+              My scores
             </button>
           </div>
+          <div class="resume-banner is-hidden" id="resume-banner">
+            <div class="resume-copy">
+              <strong id="resume-title">Unfinished quiz on this device</strong>
+              <p id="resume-meta">Saved locally — survives reload and new deploys.</p>
+            </div>
+            <div class="resume-actions">
+              <button class="btn btn-primary" data-action="resume-draft" type="button">
+                Continue
+              </button>
+              <button class="btn btn-ghost" data-action="discard-draft" type="button">
+                Discard
+              </button>
+            </div>
+          </div>
           <button class="link-coach" data-action="open-coach">
-            Coach analytics
+            Admin scores
           </button>
         </div>
         <div class="hero-visual" aria-hidden="true">
@@ -169,15 +183,29 @@
         </button>
         <div class="bar-title">
           <span class="bar-eyebrow">Your account</span>
-          <strong>My progress</strong>
+          <strong>My scores</strong>
         </div>
         <button class="btn btn-sm btn-ghost" data-action="sign-out">Sign out</button>
       </header>
       <div class="coach-body">
         <p class="coach-status" id="progress-status">Loading…</p>
+        <div class="score-summary" id="progress-summary"></div>
         <section class="coach-section">
-          <h2>Recent sessions</h2>
+          <h2>Your sessions</h2>
+          <p class="section-hint">Practice, selection, and official mocks — tap one to see what you missed.</p>
           <div id="progress-sessions" class="coach-table-wrap"></div>
+        </section>
+        <section class="coach-section is-hidden" id="progress-detail-section">
+          <div class="detail-bar">
+            <button class="btn btn-sm btn-ghost" data-action="progress-back-sessions" type="button">
+              ← All sessions
+            </button>
+            <div>
+              <h2 id="progress-detail-title">Session</h2>
+              <p class="detail-meta" id="progress-detail-meta"></p>
+            </div>
+          </div>
+          <div id="progress-detail-misses"></div>
         </section>
         <section class="coach-section">
           <h2>Topic accuracy</h2>
@@ -385,6 +413,13 @@
           </button>
           <button
             class="btn btn-ghost"
+            data-action="my-progress"
+            id="btn-results-progress"
+          >
+            My scores
+          </button>
+          <button
+            class="btn btn-ghost"
             data-action="go-hub"
             id="btn-results-hub"
           >
@@ -442,7 +477,7 @@
         </button>
         <div class="bar-title">
           <span class="bar-eyebrow">Organizers</span>
-          <strong>Coach analytics</strong>
+          <strong>Admin PIN</strong>
         </div>
       </header>
       <div class="name-body">
@@ -474,7 +509,7 @@
         </button>
         <div class="bar-title">
           <span class="bar-eyebrow">Organizers</span>
-          <strong>Analytics</strong>
+          <strong>Admin scores</strong>
         </div>
         <button class="btn btn-sm btn-ghost" data-action="coach-refresh">
           Refresh
@@ -482,29 +517,63 @@
       </header>
 
       <div class="coach-body">
-        <div class="coach-filters">
-          <label class="field-label" for="coach-kind">Session kind</label>
-          <select id="coach-kind" class="answer-field">
-            <option value="all">All kinds</option>
-            <option value="selection">Selection</option>
-            <option value="official_mock">Official mock</option>
-            <option value="practice">Practice</option>
-          </select>
+        <div class="coach-toolbar">
+          <div class="coach-filters">
+            <label class="field-label" for="coach-kind">Show</label>
+            <select id="coach-kind" class="answer-field">
+              <option value="all">All (practice + mocks)</option>
+              <option value="official_mock">Official mock</option>
+              <option value="selection">Team selection</option>
+              <option value="practice">Practice</option>
+            </select>
+          </div>
+          <div class="coach-filters coach-search-wrap">
+            <label class="field-label" for="coach-search">Find person</label>
+            <input
+              id="coach-search"
+              class="answer-field"
+              type="search"
+              placeholder="Name or department…"
+              autocomplete="off"
+            />
+          </div>
         </div>
 
         <p class="coach-status" id="coach-status">Loading…</p>
+        <div class="score-summary" id="coach-summary"></div>
 
-        <section class="coach-section">
-          <h2>Participant rankings</h2>
+        <section class="coach-section" id="coach-people-section">
+          <h2>People</h2>
+          <p class="section-hint">Tap a name to see their scores, what they got wrong, and every practice / mock run.</p>
           <div id="coach-rankings" class="coach-table-wrap"></div>
         </section>
 
-        <section class="coach-section">
+        <section class="coach-section is-hidden" id="coach-person-section">
+          <div class="detail-bar">
+            <button class="btn btn-sm btn-ghost" data-action="coach-back-people" type="button">
+              ← All people
+            </button>
+            <div>
+              <h2 id="coach-person-name">Person</h2>
+              <p class="detail-meta" id="coach-person-meta"></p>
+            </div>
+          </div>
+          <div class="score-summary" id="coach-person-summary"></div>
+          <h3 class="coach-subhead">Sessions</h3>
+          <p class="section-hint">Tap a session to review wrong answers.</p>
+          <div id="coach-person-sessions" class="coach-table-wrap"></div>
+          <div id="coach-session-detail" class="is-hidden">
+            <h3 class="coach-subhead" id="coach-session-title">Wrong answers</h3>
+            <div id="coach-session-misses"></div>
+          </div>
+        </section>
+
+        <section class="coach-section" id="coach-agg-topics">
           <h2>Topic weakness</h2>
           <div id="coach-topics" class="coach-table-wrap"></div>
         </section>
 
-        <section class="coach-section">
+        <section class="coach-section" id="coach-agg-hard">
           <h2>Hardest questions</h2>
           <div id="coach-hard" class="coach-table-wrap"></div>
         </section>
