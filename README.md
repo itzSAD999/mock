@@ -2,6 +2,23 @@
 
 Practice and team-selection site for the College of Science (KNUST) quiz. Scores and per-answer analytics sync through **Supabase** when configured; otherwise they stay on the device (`localStorage`).
 
+## Database setup (clean install)
+
+1. Open Supabase → **SQL Editor**.
+2. Paste and run **[`supabase/schema.sql`](supabase/schema.sql)** once.
+   - This **drops** old quiz tables and recreates everything the app needs.
+3. **Authentication → Providers → Email**
+   - Email: **ON**
+   - **Confirm email: OFF** (so signup works immediately — no inbox required)
+
+## Accounts (email + password)
+
+On the site: **Sign in → Create account** (name, department, email, password).
+
+Logged-in users skip the guest name form; practice / selection / official mocks sync to their account. **My progress** shows sessions and topic accuracy. Coach analytics still sees everyone.
+
+Guests can still enter name + department without an account.
+
 ## Quick start (local)
 
 1. Serve the folder (any static server), e.g. `python -m http.server 5173`

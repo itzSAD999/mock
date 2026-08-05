@@ -23,7 +23,15 @@
     <section id="view-home" class="view view-home is-active">
       <header class="topbar">
         <span class="topbar-mark">COS</span>
-        <span class="topbar-meta">KNUST · 2026</span>
+        <div class="topbar-right">
+          <button class="btn btn-sm btn-ghost is-hidden" id="btn-my-progress" data-action="my-progress">
+            My progress
+          </button>
+          <button class="btn btn-sm btn-ghost" id="btn-auth" data-action="open-auth">
+            Sign in
+          </button>
+          <span class="topbar-meta" id="auth-chip"></span>
+        </div>
       </header>
 
       <div class="hero">
@@ -31,8 +39,8 @@
           <p class="brand">College of Science</p>
           <h1>Drill for the Inter-Departmental Quiz</h1>
           <p class="lede">
-            Run trials to pick the team — practice solo — or stage an official
-            mock. Scores sync when Supabase is configured.
+            Create an account to save your progress — or run team selection and
+            official mocks. Coach analytics stay available for organizers.
           </p>
           <div class="hero-actions">
             <button class="btn btn-primary" data-action="start-select">
@@ -41,8 +49,8 @@
             <button class="btn btn-ghost" data-action="start-official">
               Official mock
             </button>
-            <button class="btn btn-ghost" data-action="start-study">
-              Study mode
+            <button class="btn btn-ghost" data-action="start-practice">
+              Practice (tracked)
             </button>
           </div>
           <button class="link-coach" data-action="open-coach">
@@ -72,6 +80,91 @@
           Topics: History of KNUST · Maths · Campus Locations · History of COS
         </p>
       </footer>
+    </section>
+
+    <!-- AUTH -->
+    <section id="view-auth" class="view view-auth">
+      <header class="bar">
+        <button class="icon-btn" data-action="go-home" aria-label="Home">
+          ←
+        </button>
+        <div class="bar-title">
+          <span class="bar-eyebrow">Account</span>
+          <strong id="auth-title">Sign in</strong>
+        </div>
+      </header>
+
+      <div class="name-body auth-body">
+        <div class="auth-tabs">
+          <button class="auth-tab is-active" data-auth-tab="signin">Sign in</button>
+          <button class="auth-tab" data-auth-tab="signup">Create account</button>
+        </div>
+
+        <div id="auth-signin">
+          <label class="field-label" for="signin-email">Email</label>
+          <input id="signin-email" class="answer-field name-field" type="email" autocomplete="email" placeholder="you@st.knust.edu.gh" />
+          <label class="field-label" for="signin-password">Password</label>
+          <input id="signin-password" class="answer-field name-field" type="password" autocomplete="current-password" placeholder="••••••••" />
+          <p class="coach-error is-hidden" id="signin-error"></p>
+          <button class="btn btn-primary" data-action="do-signin">Sign in</button>
+        </div>
+
+        <div id="auth-signup" class="is-hidden">
+          <label class="field-label" for="signup-name">Full name</label>
+          <input id="signup-name" class="answer-field name-field" type="text" autocomplete="name" placeholder="e.g. Ama Mensah" maxlength="48" />
+          <label class="field-label" for="signup-dept">Department</label>
+          <select id="signup-dept" class="answer-field name-field">
+            <option value="">Select department…</option>
+            <option>Biochemistry and Biotechnology</option>
+            <option>Environmental Sciences</option>
+            <option>Food Science and Technology</option>
+            <option>Optometry and Visual Science</option>
+            <option>Theoretical and Applied Biology</option>
+            <option>Chemistry</option>
+            <option>Computer Science</option>
+            <option>Mathematics</option>
+            <option>Actuarial Science</option>
+            <option>Physics</option>
+            <option>Meteorology and Climate Science</option>
+            <option>Other / Not listed</option>
+          </select>
+          <label class="field-label" for="signup-email">Email</label>
+          <input id="signup-email" class="answer-field name-field" type="email" autocomplete="email" placeholder="you@st.knust.edu.gh" />
+          <label class="field-label" for="signup-password">Password</label>
+          <input id="signup-password" class="answer-field name-field" type="password" autocomplete="new-password" placeholder="At least 6 characters" />
+          <p class="name-hint">
+            Your quizzes and progress save to this account. No email confirmation
+            needed if Confirm email is OFF in Supabase.
+          </p>
+          <p class="coach-error is-hidden" id="signup-error"></p>
+          <button class="btn btn-primary" data-action="do-signup">Create account</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- MY PROGRESS -->
+    <section id="view-progress" class="view view-progress">
+      <header class="bar">
+        <button class="icon-btn" data-action="go-home" aria-label="Home">
+          ←
+        </button>
+        <div class="bar-title">
+          <span class="bar-eyebrow">Your account</span>
+          <strong>My progress</strong>
+        </div>
+        <button class="btn btn-sm btn-ghost" data-action="sign-out">Sign out</button>
+      </header>
+      <div class="coach-body">
+        <p class="coach-status" id="progress-status">Loading…</p>
+        <section class="coach-section">
+          <h2>Recent sessions</h2>
+          <div id="progress-sessions" class="coach-table-wrap"></div>
+        </section>
+        <section class="coach-section">
+          <h2>Topic accuracy</h2>
+          <div id="progress-topics" class="coach-table-wrap"></div>
+        </section>
+      </div>
     </section>
 
     <!-- NAME ENTRY -->
@@ -226,9 +319,20 @@
         <p class="results-pct" id="results-pct"></p>
         <p class="results-time is-hidden" id="results-time"></p>
         <p class="results-sync is-hidden" id="results-sync"></p>
+        <div class="results-misses is-hidden" id="results-misses">
+          <p class="results-misses-label">Missed this round</p>
+          <ul id="results-miss-list"></ul>
+        </div>
         <div class="results-actions">
-          <button class="btn btn-primary" data-action="retry" id="btn-retry">
-            Try again
+          <button
+            class="btn btn-primary is-hidden"
+            data-action="retry-misses"
+            id="btn-retry-misses"
+          >
+            Retry missed questions
+          </button>
+          <button class="btn btn-ghost" data-action="retry" id="btn-retry">
+            Retake full set
           </button>
           <button
             class="btn btn-ghost is-hidden"
@@ -280,6 +384,9 @@
           </button>
           <button class="chip-filter" data-board-filter="official_mock">
             Official mock
+          </button>
+          <button class="chip-filter" data-board-filter="practice">
+            Practice
           </button>
         </div>
         <p class="board-empty is-hidden" id="board-empty">

@@ -1,9 +1,12 @@
 (() => {
   const STORAGE_KEY = "cos-quiz-leaderboard";
+  const MISS_KEY = "cos-quiz-misses";
   const COACH_UNLOCK_KEY = "cos-coach-unlocked";
 
   const views = {
     home: document.getElementById("view-home"),
+    auth: document.getElementById("view-auth"),
+    progress: document.getElementById("view-progress"),
     name: document.getElementById("view-name"),
     hub: document.getElementById("view-hub"),
     mode: document.getElementById("view-mode"),
@@ -32,10 +35,14 @@
     questionStartedAt: 0,
     answerLog: [],
     lastLogIndex: -1,
+    lastMissIds: [],
+    isMissReview: false,
     lastBoardFrom: "home",
     boardFilter: "tracked",
     coachUnlocked: sessionStorage.getItem(COACH_UNLOCK_KEY) === "1",
     coachData: null,
+    authUser: null,
+    authTab: "signin",
   };
 
   function show(name) {
@@ -120,8 +127,51 @@
     if (!el) return;
     const ready = db()?.isConfigured?.();
     el.textContent = ready
-      ? "Supabase connected · scores sync across devices"
+      ? "Supabase connected · accounts & scores sync across devices"
       : "Topics: History of KNUST · Maths · Campus · COS · Local scores until Supabase is configured";
+  }
+
+  function updateAuthUI() {
+    const btn = document.getElementById("btn-auth");
+    const chip = document.getElementById("auth-chip");
+    const prog = document.getElementById("btn-my-progress");
+    const user = state.authUser;
+    if (user) {
+      const name =
+        user.user_metadata?.display_name ||
+        user.email?.split("@")[0] ||
+        "Account";
+      btn.textContent = "Account";
+      chip.textContent = name;
+      prog.classList.remove("is-hidden");
+    } else {
+      btn.textContent = "Sign in";
+      chip.textContent = "KNUST · 2026";
+      prog.classList.add("is-hidden");
+    }
+  }
+
+  async function refreshAuth() {
+    if (!db()?.isConfigured?.()) {
+      state.authUser = null;
+      updateAuthUI();
+      return;
+    }
+    try {
+      const session = await db().getSession();
+      state.authUser = session?.user || null;
+      if (state.authUser) {
+        const p = await db().ensureParticipantFromUser();
+        if (p) {
+          state.playerName = p.display_name;
+          state.playerDept = p.department;
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      state.authUser = null;
+    }
+    updateAuthUI();
   }
 
   /* ——— ANSWER MATCHING ——— */
@@ -218,6 +268,90 @@
     e.marked_override = true;
   }
 
+  /* ——— MISS BANK (wrong-question re-attempts) ——— */
+  function personKey(name, dept) {
+    return `${normalize(name)}|${normalize(dept)}`;
+  }
+
+  function loadMissStore() {
+    try {
+      return JSON.parse(localStorage.getItem(MISS_KEY) || "{}");
+    } catch {
+      return {};
+    }
+  }
+
+  function saveMissStore(store) {
+    localStorage.setItem(MISS_KEY, JSON.stringify(store));
+  }
+
+  function getMissIds() {
+    if (!state.playerName) return [];
+    const store = loadMissStore();
+    const key = personKey(state.playerName, state.playerDept);
+    const entry = store[key];
+    return entry?.ids ? [...entry.ids] : [];
+  }
+
+  function updateMissBankFromLog() {
+    if (!state.playerName || state.mode === "study") return getMissIds();
+
+    const store = loadMissStore();
+    const key = personKey(state.playerName, state.playerDept);
+    const set = new Set(store[key]?.ids || []);
+
+    state.answerLog.forEach((a) => {
+      if (!a.question_id) return;
+      if (a.is_correct) set.delete(a.question_id);
+      else set.add(a.question_id);
+    });
+
+    store[key] = {
+      name: state.playerName,
+      department: state.playerDept,
+      ids: [...set],
+      updatedAt: Date.now(),
+    };
+    saveMissStore(store);
+    return store[key].ids;
+  }
+
+  function questionsByIds(ids) {
+    const map = Object.fromEntries(allQuestions().map((q) => [q.id, q]));
+    return ids.map((id) => map[id]).filter(Boolean);
+  }
+
+  /** Put historically missed questions first (practice technique). */
+  function prioritizeMisses(pool) {
+    if (state.sessionKind === "official_mock" || state.isMissReview) {
+      return shuffle(pool);
+    }
+    const miss = new Set(getMissIds());
+    if (!miss.size) return shuffle(pool);
+    const weak = [];
+    const rest = [];
+    pool.forEach((q) => (miss.has(q.id) ? weak : rest).push(q));
+    return [...shuffle(weak), ...shuffle(rest)];
+  }
+
+  function startMissReview() {
+    const ids =
+      state.lastMissIds.length > 0 ? state.lastMissIds : getMissIds();
+    const pool = questionsByIds(ids);
+    if (!pool.length) return;
+
+    state.isMissReview = true;
+    state.sessionKind = "practice";
+    state.context = {
+      kind: "miss_review",
+      id: "miss_review",
+      type: "mixed",
+      label: "Missed questions review",
+    };
+    state.pool = shuffle(pool);
+    startSession("contest");
+  }
+
   /* ——— LOCAL + REMOTE BOARD ——— */
   function loadLocalBoard() {
     try {
@@ -286,7 +420,10 @@
       }
       const participant = await db().upsertParticipant(
         state.playerName,
-        state.playerDept
+        state.playerDept,
+        state.authUser
+          ? { userId: state.authUser.id, email: state.authUser.email }
+          : {}
       );
       await db().saveSession({
         participant,
@@ -330,7 +467,9 @@
               ? ["selection"]
               : filter === "official_mock"
                 ? ["official_mock"]
-                : ["selection", "official_mock"];
+                : filter === "practice"
+                  ? ["practice"]
+                  : ["selection", "official_mock"];
         const remote = await db().fetchLeaderboard(kinds, 80);
         list = (remote || []).map((r) => ({
           name: r.display_name,
@@ -353,6 +492,7 @@
       const local = loadLocalBoard().filter((e) => {
         if (filter === "tracked")
           return e.kind === "selection" || e.kind === "official_mock" || !e.kind;
+        if (filter === "practice") return e.kind === "practice";
         return e.kind === filter || (!e.kind && filter === "selection");
       });
       list = local;
@@ -389,6 +529,13 @@
         : flow === "select"
           ? "selection"
           : "practice";
+    state.isMissReview = false;
+
+    // Logged-in users skip the form — progress is on their account
+    if (state.authUser && state.playerName && state.playerDept) {
+      openHub();
+      return;
+    }
 
     const eyebrow = document.getElementById("name-eyebrow");
     const title = document.getElementById("name-title");
@@ -398,7 +545,12 @@
       eyebrow.textContent = "Official mock";
       title.textContent = "Who is sitting the mock?";
       hint.textContent =
-        "Official mock scores are tagged separately from selection trials for fair comparison.";
+        "Tip: Sign in so this mock stays on your account. Or continue as guest.";
+    } else if (flow === "practice") {
+      eyebrow.textContent = "Tracked practice";
+      title.textContent = "Who is practicing?";
+      hint.textContent =
+        "Create an account to keep progress forever — or enter name + department as guest.";
     } else {
       eyebrow.textContent = "Team selection";
       title.textContent = "Who is trying out?";
@@ -406,8 +558,8 @@
         "They type their own answers. Scores sync so you can compare everyone.";
     }
 
-    document.getElementById("player-name").value = "";
-    document.getElementById("player-dept").value = "";
+    document.getElementById("player-name").value = state.playerName || "";
+    document.getElementById("player-dept").value = state.playerDept || "";
     show("name");
     setTimeout(() => document.getElementById("player-name").focus(), 80);
   }
@@ -430,13 +582,18 @@
 
   /* ——— HUB ——— */
   function openHub() {
-    const tracked = state.flow === "select" || state.flow === "official";
+    const tracked =
+      state.flow === "select" ||
+      state.flow === "official" ||
+      state.flow === "practice";
     document.getElementById("hub-eyebrow").textContent =
       state.flow === "official"
         ? "Official mock"
         : state.flow === "select"
           ? "Team selection"
-          : "Study hub";
+          : state.flow === "practice"
+            ? "Tracked practice"
+            : "Study hub";
     document.getElementById("hub-title").textContent = tracked
       ? "Pick the question set"
       : "Choose a round";
@@ -446,10 +603,13 @@
     const topicsWrap = document.getElementById("hub-topics-wrap");
 
     if (tracked && state.playerName) {
-      playerEl.textContent = `${state.playerName} · ${state.playerDept}`;
+      const missN = getMissIds().length;
+      playerEl.textContent = `${state.playerName} · ${state.playerDept}${
+        missN ? ` · ${missN} weak Qs` : ""
+      }`;
       playerEl.classList.remove("is-hidden");
       boardBtn.classList.remove("is-hidden");
-      topicsWrap.classList.add("is-hidden");
+      topicsWrap.classList.toggle("is-hidden", state.flow !== "practice");
     } else {
       playerEl.classList.add("is-hidden");
       boardBtn.classList.add("is-hidden");
@@ -457,6 +617,18 @@
     }
 
     const grid = document.getElementById("hub-grid");
+    const missIds = getMissIds();
+    const missTile =
+      tracked && missIds.length
+        ? `
+      <button class="round-tile round-tile-miss" data-round="misses">
+        <div class="rt-num">Weak spots</div>
+        <h3>Retry missed questions</h3>
+        <p>Only the questions you got wrong — classic mock re-attempt drill.</p>
+        <span class="rt-count">${missIds.length} questions</span>
+      </button>`
+        : "";
+
     const tiles = QUIZ.rounds
       .map(
         (r) => `
@@ -477,11 +649,16 @@
         <span class="rt-count">${QUIZ.totalQuestions} questions</span>
       </button>`;
 
-    grid.innerHTML = tiles + fullTile;
+    grid.innerHTML = missTile + tiles + fullTile;
 
     grid.querySelectorAll("[data-round]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const id = btn.dataset.round;
+        if (id === "misses") {
+          state.lastMissIds = getMissIds();
+          startMissReview();
+          return;
+        }
         if (tracked) {
           beginTrackedTrial(id);
         } else if (id === "full") {
@@ -492,16 +669,29 @@
       });
     });
 
-    if (state.flow === "study") {
+    if (state.flow === "practice" || state.flow === "study") {
       const chips = document.getElementById("topic-chips");
       const topics = [...new Set(allQuestions().map((q) => q.topic))];
       chips.innerHTML = topics
         .map((t) => `<button class="topic-chip" data-topic="${t}">${t}</button>`)
         .join("");
       chips.querySelectorAll("[data-topic]").forEach((btn) => {
-        btn.addEventListener("click", () =>
-          openModePicker("topic", btn.dataset.topic)
-        );
+        btn.addEventListener("click", () => {
+          if (state.flow === "practice") {
+            const pool = questionsForTopic(btn.dataset.topic);
+            state.context = {
+              kind: "topic",
+              id: btn.dataset.topic,
+              type: "mixed",
+              label: btn.dataset.topic,
+            };
+            state.pool = pool;
+            state.isMissReview = false;
+            startSession("contest");
+          } else {
+            openModePicker("topic", btn.dataset.topic);
+          }
+        });
       });
     }
 
@@ -509,6 +699,7 @@
   }
 
   function beginTrackedTrial(id) {
+    state.isMissReview = false;
     let pool;
     let label;
     if (id === "full") {
@@ -617,21 +808,32 @@
       state.pool = questionsForRound(state.context.id);
     else if (state.context?.kind === "topic")
       state.pool = questionsForTopic(state.context.id);
+    // miss_review keeps pool from startMissReview
 
-    state.pool = shuffle(state.pool);
+    if (state.context?.kind === "miss_review") {
+      state.pool = shuffle(state.pool);
+    } else {
+      state.pool = prioritizeMisses(state.pool);
+    }
 
     document.getElementById("score-pill").textContent = "0";
 
     const chip = document.getElementById("player-chip");
-    if (state.playerName && state.sessionKind !== "practice") {
-      chip.textContent = state.playerName;
+    if (state.playerName) {
+      chip.textContent = state.isMissReview
+        ? `${state.playerName} · misses`
+        : state.playerName;
       chip.classList.remove("is-hidden");
     } else {
       chip.classList.add("is-hidden");
     }
 
     const timer = document.getElementById("timer");
-    if (mode === "speed" || state.sessionKind !== "practice") {
+    if (
+      mode === "speed" ||
+      state.sessionKind === "selection" ||
+      state.sessionKind === "official_mock"
+    ) {
       startTimer();
     } else if (mode === "contest") {
       state.startedAt = Date.now();
@@ -852,12 +1054,20 @@
     const syncEl = document.getElementById("results-sync");
     syncEl.classList.add("is-hidden");
 
+    const sessionMisses = scored
+      ? state.answerLog.filter((a) => !a.is_correct).map((a) => a.question_id)
+      : [];
+    state.lastMissIds = [...new Set(sessionMisses)];
+
     if (scored) {
+      updateMissBankFromLog();
       await persistSession(score, total, pct);
     }
 
     let title = "Session complete";
-    if (pct !== null) {
+    if (state.isMissReview) {
+      title = pct >= 80 ? "Weak spots clearing" : "Keep drilling misses";
+    } else if (pct !== null) {
       if (pct >= 85) title = "Strong pick";
       else if (pct >= 65) title = "Solid run";
       else if (pct >= 40) title = "Needs more drill";
@@ -891,25 +1101,51 @@
       timeEl.classList.add("is-hidden");
     }
 
+    const missWrap = document.getElementById("results-misses");
+    const missList = document.getElementById("results-miss-list");
+    const retryMissBtn = document.getElementById("btn-retry-misses");
+    const qMap = Object.fromEntries(allQuestions().map((q) => [q.id, q]));
+
+    if (state.lastMissIds.length) {
+      missWrap.classList.remove("is-hidden");
+      missList.innerHTML = state.lastMissIds
+        .map((id) => {
+          const q = qMap[id];
+          return `<li><strong>${escapeHtml(q?.topic || "")}</strong> — ${escapeHtml(
+            (q?.q || id).slice(0, 100)
+          )}${(q?.q || "").length > 100 ? "…" : ""}</li>`;
+        })
+        .join("");
+      retryMissBtn.classList.remove("is-hidden");
+      retryMissBtn.textContent = `Retry missed (${state.lastMissIds.length})`;
+    } else {
+      missWrap.classList.add("is-hidden");
+      missList.innerHTML = "";
+      retryMissBtn.classList.add("is-hidden");
+    }
+
     const tracked =
-      state.sessionKind === "selection" || state.sessionKind === "official_mock";
+      state.sessionKind === "selection" ||
+      state.sessionKind === "official_mock" ||
+      state.sessionKind === "practice";
     const nextC = document.getElementById("btn-next-contestant");
     const boardBtn = document.getElementById("btn-view-board");
     const retry = document.getElementById("btn-retry");
     const hubBtn = document.getElementById("btn-results-hub");
 
-    if (tracked) {
+    if (state.sessionKind === "selection" || state.sessionKind === "official_mock") {
       nextC.classList.remove("is-hidden");
       boardBtn.classList.remove("is-hidden");
-      retry.textContent = "Retake same set";
+      retry.textContent = "Retake full set";
       hubBtn.textContent = "Different round";
     } else {
       nextC.classList.add("is-hidden");
       boardBtn.classList.toggle("is-hidden", !scored);
-      retry.textContent = "Try again";
+      retry.textContent = "Retake full set";
       hubBtn.textContent = "Back to rounds";
     }
 
+    state.isMissReview = false;
     show("results");
   }
 
@@ -1109,7 +1345,165 @@
   }
 
   /* ——— EVENTS ——— */
+  function setAuthTab(tab) {
+    state.authTab = tab;
+    document.querySelectorAll("[data-auth-tab]").forEach((b) => {
+      b.classList.toggle("is-active", b.dataset.authTab === tab);
+    });
+    document.getElementById("auth-signin").classList.toggle("is-hidden", tab !== "signin");
+    document.getElementById("auth-signup").classList.toggle("is-hidden", tab !== "signup");
+    document.getElementById("auth-title").textContent =
+      tab === "signup" ? "Create account" : "Sign in";
+    document.getElementById("signin-error").classList.add("is-hidden");
+    document.getElementById("signup-error").classList.add("is-hidden");
+  }
+
+  async function doSignIn() {
+    const errEl = document.getElementById("signin-error");
+    errEl.classList.add("is-hidden");
+    const email = document.getElementById("signin-email").value.trim();
+    const password = document.getElementById("signin-password").value;
+    try {
+      await db().signIn({ email, password });
+      await refreshAuth();
+      show("home");
+    } catch (err) {
+      errEl.textContent = err.message || "Sign in failed";
+      errEl.classList.remove("is-hidden");
+    }
+  }
+
+  async function doSignUp() {
+    const errEl = document.getElementById("signup-error");
+    errEl.classList.add("is-hidden");
+    try {
+      const result = await db().signUp({
+        email: document.getElementById("signup-email").value.trim(),
+        password: document.getElementById("signup-password").value,
+        displayName: document.getElementById("signup-name").value.trim(),
+        department: document.getElementById("signup-dept").value.trim(),
+      });
+      await refreshAuth();
+      if (state.authUser) {
+        show("home");
+        return;
+      }
+      // Confirm email still enabled in Supabase dashboard
+      if (result.user && !result.session) {
+        errEl.textContent =
+          "Account created, but Confirm email is still ON in Supabase. Turn it OFF under Authentication → Providers → Email, then sign in.";
+        errEl.classList.remove("is-hidden");
+      }
+    } catch (err) {
+      errEl.textContent = err.message || "Sign up failed";
+      errEl.classList.remove("is-hidden");
+    }
+  }
+
+  async function doSignOut() {
+    try {
+      await db().signOut();
+    } catch (err) {
+      console.error(err);
+    }
+    state.authUser = null;
+    state.playerName = "";
+    state.playerDept = "";
+    updateAuthUI();
+    show("home");
+  }
+
+  async function loadMyProgress() {
+    const status = document.getElementById("progress-status");
+    const sessEl = document.getElementById("progress-sessions");
+    const topicEl = document.getElementById("progress-topics");
+
+    if (!state.authUser) {
+      status.textContent = "Sign in to see your saved progress.";
+      sessEl.innerHTML = "";
+      topicEl.innerHTML = "";
+      return;
+    }
+
+    status.textContent = "Loading your sessions…";
+    try {
+      const data = await db().fetchMyProgress();
+      if (!data) {
+        status.textContent = "No progress yet — run a practice or mock.";
+        sessEl.innerHTML = "";
+        topicEl.innerHTML = "";
+        return;
+      }
+
+      const { participant, sessions, answers } = data;
+      status.textContent = `${participant.display_name} · ${participant.department} · ${sessions.length} sessions`;
+
+      sessEl.innerHTML = sessions.length
+        ? `<table class="coach-table">
+          <thead><tr><th>When</th><th>Kind</th><th>Set</th><th>Score</th><th>Time</th></tr></thead>
+          <tbody>
+            ${sessions
+              .slice(0, 30)
+              .map((s) => {
+                const pct = s.total ? Math.round((s.score / s.total) * 100) : 0;
+                const when = new Date(s.finished_at).toLocaleString();
+                return `<tr>
+                  <td>${escapeHtml(when)}</td>
+                  <td>${escapeHtml(s.kind)}</td>
+                  <td>${escapeHtml(s.label || s.round_id || "—")}</td>
+                  <td>${s.score}/${s.total} (${pct}%)</td>
+                  <td>${formatTime(s.elapsed_sec || 0)}</td>
+                </tr>`;
+              })
+              .join("")}
+          </tbody>
+        </table>`
+        : `<p class="coach-empty">No sessions saved yet.</p>`;
+
+      const topics = {};
+      answers.forEach((a) => {
+        const t = a.topic || "Untagged";
+        if (!topics[t]) topics[t] = { topic: t, correct: 0, total: 0 };
+        topics[t].total += 1;
+        if (a.is_correct) topics[t].correct += 1;
+      });
+      const topicRows = Object.values(topics)
+        .map((t) => ({
+          ...t,
+          pct: t.total ? Math.round((t.correct / t.total) * 100) : 0,
+        }))
+        .sort((a, b) => a.pct - b.pct);
+
+      topicEl.innerHTML = topicRows.length
+        ? `<table class="coach-table">
+          <thead><tr><th>Topic</th><th>Accuracy</th><th>Attempts</th></tr></thead>
+          <tbody>
+            ${topicRows
+              .map(
+                (t) => `<tr>
+                <td>${escapeHtml(t.topic)}</td>
+                <td>${t.pct}%</td>
+                <td>${t.total}</td>
+              </tr>`
+              )
+              .join("")}
+          </tbody>
+        </table>`
+        : `<p class="coach-empty">Answer-level data appears after you complete a scored session.</p>`;
+    } catch (err) {
+      console.error(err);
+      status.textContent =
+        "Could not load progress. Run supabase/auth_migration.sql if user_id column is missing.";
+    }
+  }
+
   document.body.addEventListener("click", (e) => {
+    const authTab = e.target.closest("[data-auth-tab]");
+    if (authTab) {
+      setAuthTab(authTab.dataset.authTab);
+      return;
+    }
+
     const filterBtn = e.target.closest("[data-board-filter]");
     if (filterBtn) {
       state.boardFilter = filterBtn.dataset.boardFilter;
@@ -1125,12 +1519,25 @@
       openNameScreen("select");
     } else if (action === "start-official") {
       openNameScreen("official");
-    } else if (action === "start-study") {
-      state.flow = "study";
-      state.sessionKind = "practice";
-      state.playerName = "";
-      state.playerDept = "";
-      openHub();
+    } else if (action === "start-practice" || action === "start-study") {
+      openNameScreen("practice");
+    } else if (action === "open-auth") {
+      if (state.authUser) {
+        loadMyProgress();
+        show("progress");
+      } else {
+        setAuthTab("signin");
+        show("auth");
+      }
+    } else if (action === "my-progress") {
+      loadMyProgress();
+      show("progress");
+    } else if (action === "do-signin") {
+      doSignIn();
+    } else if (action === "do-signup") {
+      doSignUp();
+    } else if (action === "sign-out") {
+      doSignOut();
     } else if (action === "confirm-name") {
       confirmIdentity();
     } else if (action === "go-home") {
@@ -1138,8 +1545,14 @@
       show("home");
     } else if (action === "hub-back") {
       stopTimer();
-      if (state.flow === "select" || state.flow === "official") show("name");
-      else show("home");
+      if (
+        state.flow === "select" ||
+        state.flow === "official" ||
+        state.flow === "practice"
+      ) {
+        if (state.authUser) show("home");
+        else show("name");
+      } else show("home");
     } else if (action === "go-hub") {
       stopTimer();
       openHub();
@@ -1149,7 +1562,10 @@
       else if (state.flow === "study") show("mode");
       else openHub();
     } else if (action === "retry") {
-      startSession(state.mode);
+      state.isMissReview = false;
+      startSession(state.mode === "study" ? "contest" : state.mode);
+    } else if (action === "retry-misses") {
+      startMissReview();
     } else if (action === "next-contestant") {
       openNameScreen(state.flow === "official" ? "official" : "select");
     } else if (action === "show-board") {
@@ -1215,6 +1631,14 @@
 
   syncHeroCounts();
   updateDbStatus();
+  updateAuthUI();
+  refreshAuth();
+  if (db()?.isConfigured?.()) {
+    db().onAuthChange((session) => {
+      state.authUser = session?.user || null;
+      updateAuthUI();
+    });
+  }
 
   document.addEventListener("keydown", (e) => {
     if (!views.practice.classList.contains("is-active")) return;

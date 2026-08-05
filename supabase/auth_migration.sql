@@ -1,0 +1,8 @@
+-- Deprecated: use schema.sql instead.
+-- schema.sql is now a FULL RESET (drop + recreate everything the app needs).
+--
+-- Run: supabase/schema.sql
+--
+-- Also in Dashboard:
+-- Authentication → Providers → Email → enable Email
+-- Authentication → Providers → Email → Confirm email = OFF

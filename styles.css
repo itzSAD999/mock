@@ -193,6 +193,48 @@ button {
   padding: 0.25rem 0 1.5rem;
 }
 
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.view-auth,
+.view-progress {
+  background:
+    radial-gradient(ellipse 70% 50% at 50% -10%, rgba(26, 86, 160, 0.4), transparent),
+    linear-gradient(180deg, var(--blue-900), var(--blue-950));
+  color: var(--white);
+}
+
+.auth-tabs {
+  display: flex;
+  gap: 0.45rem;
+  margin-bottom: 1.25rem;
+}
+
+.auth-tab {
+  flex: 1;
+  padding: 0.65rem;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.auth-tab.is-active {
+  background: rgba(47, 127, 212, 0.3);
+  border-color: var(--blue-500);
+  color: var(--white);
+}
+
+.auth-body .btn {
+  width: 100%;
+  margin-top: 0.35rem;
+}
+
 .topbar-mark {
   font-family: var(--font-display);
   font-weight: 700;
@@ -877,6 +919,48 @@ button {
 
 .round-tile-full {
   border-color: rgba(201, 162, 39, 0.35);
+}
+
+.round-tile-miss {
+  border-color: rgba(194, 59, 59, 0.45);
+  background: rgba(194, 59, 59, 0.08);
+}
+
+.results-misses {
+  text-align: left;
+  margin-top: 1.25rem;
+  padding: 1rem 1.1rem;
+  border-radius: var(--radius);
+  background: rgba(194, 59, 59, 0.1);
+  border: 1px solid rgba(194, 59, 59, 0.3);
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.results-misses-label {
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #f5c0c0;
+  margin-bottom: 0.55rem;
+}
+
+.results-misses ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.results-misses li {
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.75);
+  line-height: 1.35;
+}
+
+.results-misses strong {
+  color: var(--gold);
+  font-weight: 600;
 }
 
 @media (min-width: 640px) {
