@@ -48,6 +48,7 @@
     coachSearch: "",
     progressData: null,
     progressSessionId: null,
+    pendingStart: null, // { mode } after draft restart
     authUser: null,
     authTab: "signin",
     pendingAfterAuth: null,
@@ -1169,6 +1170,33 @@
     openHub();
   }
 
+  const OFFICIAL_MOCK_SIZE = 100;
+  const QUICK_MOCK_SIZE = 20;
+
+  function pickRandomPool(size) {
+    const all = allQuestions();
+    const n = Math.min(size, all.length);
+    return shuffle(all).slice(0, n);
+  }
+
+  function openDraftModal(message) {
+    const modal = document.getElementById("draft-modal");
+    const text = document.getElementById("draft-modal-text");
+    if (text && message) text.textContent = message;
+    else if (text) {
+      const d = peekDraft();
+      const answered = (d?.answerLog || []).length;
+      const total = d?.poolIds?.length || 0;
+      const label = d?.context?.label || "quiz";
+      text.textContent = `You have “${label}” in progress (${answered}/${total} answered), saved on this device. Continue, restart a new quiz, or cancel.`;
+    }
+    modal?.classList.remove("is-hidden");
+  }
+
+  function closeDraftModal() {
+    document.getElementById("draft-modal")?.classList.add("is-hidden");
+  }
+
   /* ——— HUB ——— */
   function openHub() {
     const tracked =
@@ -1183,9 +1211,12 @@
           : state.flow === "practice"
             ? "Tracked practice"
             : "Study hub";
-    document.getElementById("hub-title").textContent = tracked
-      ? "Pick the question set"
-      : "Choose a round";
+    document.getElementById("hub-title").textContent =
+      state.flow === "official"
+        ? "Start the official mock"
+        : tracked
+          ? "Pick the question set"
+          : "Choose a round";
 
     const playerEl = document.getElementById("hub-player");
     const boardBtn = document.getElementById("hub-board-btn");
@@ -1218,6 +1249,16 @@
       </button>`
         : "";
 
+    const bankN = QUIZ.totalQuestions;
+    const officialN = Math.min(OFFICIAL_MOCK_SIZE, bankN);
+    const officialTile = `
+      <button class="round-tile round-tile-full" data-round="official100">
+        <div class="rt-num">Official</div>
+        <h3>Official mock</h3>
+        <p>${officialN} questions chosen at random from the ${bankN}-question bank — new mix every start.</p>
+        <span class="rt-count">${officialN} questions</span>
+      </button>`;
+
     const tiles = QUIZ.rounds
       .map(
         (r) => `
@@ -1230,24 +1271,29 @@
       )
       .join("");
 
-    const QUICK_SIZE = 20;
     const quickTile = `
       <button class="round-tile round-tile-quick" data-round="quick">
         <div class="rt-num">Quick mock</div>
         <h3>Quick mock</h3>
-        <p>Random mix of ${QUICK_SIZE} questions — fast score + wrong-answer review at the end.</p>
-        <span class="rt-count">${QUICK_SIZE} questions</span>
+        <p>Random mix of ${QUICK_MOCK_SIZE} questions — fast score + wrong-answer review at the end.</p>
+        <span class="rt-count">${QUICK_MOCK_SIZE} questions</span>
       </button>`;
 
     const fullTile = `
       <button class="round-tile round-tile-full" data-round="full">
         <div class="rt-num">${tracked ? "Full set" : "All rounds"}</div>
-        <h3>Full mock</h3>
-        <p>${tracked ? `All ${QUIZ.totalQuestions} questions — best for final comparison.` : `All ${QUIZ.totalQuestions} questions shuffled.`}</p>
-        <span class="rt-count">${QUIZ.totalQuestions} questions</span>
+        <h3>Full bank</h3>
+        <p>${tracked ? `All ${bankN} questions — every item in the bank.` : `All ${bankN} questions shuffled.`}</p>
+        <span class="rt-count">${bankN} questions</span>
       </button>`;
 
-    grid.innerHTML = missTile + quickTile + tiles + fullTile;
+    if (state.flow === "official") {
+      grid.innerHTML = missTile + officialTile;
+      document.getElementById("hub-title").textContent =
+        "100 random questions · new selection each time";
+    } else {
+      grid.innerHTML = missTile + quickTile + tiles + fullTile;
+    }
 
     grid.querySelectorAll("[data-round]").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -1300,13 +1346,22 @@
     state.isMissReview = false;
     let pool;
     let label;
-    if (id === "full") {
+    if (id === "official100") {
+      pool = pickRandomPool(OFFICIAL_MOCK_SIZE);
+      label = `Official mock (${pool.length} random)`;
+      state.context = {
+        kind: "official100",
+        id: "official100",
+        type: "mixed",
+        label,
+      };
+    } else if (id === "full") {
       pool = allQuestions();
-      label = "Full mock";
+      label = "Full bank";
       state.context = { kind: "full", id: "full", type: "mixed", label };
     } else if (id === "quick") {
-      pool = shuffle(allQuestions()).slice(0, 20);
-      label = "Quick mock (20 Qs)";
+      pool = pickRandomPool(QUICK_MOCK_SIZE);
+      label = `Quick mock (${QUICK_MOCK_SIZE} Qs)`;
       state.context = { kind: "quick", id: "quick", type: "mixed", label };
     } else {
       const r = QUIZ.rounds.find((x) => x.id === id);
@@ -1398,19 +1453,15 @@
   /* ——— SESSION ——— */
   function startSession(mode) {
     if (hasUsableDraft() && draftHasProgress()) {
-      const ok = confirm(
-        "You have an unfinished quiz saved on this device.\n\nOK = start a new quiz (discard draft)\nCancel = keep draft and go back"
-      );
-      if (!ok) {
-        updateResumeBanner();
-        show("home");
-        return;
-      }
-      clearDraft();
-    } else {
-      clearDraft();
+      state.pendingStart = { mode };
+      openDraftModal();
+      return;
     }
+    clearDraft();
+    beginFreshSession(mode);
+  }
 
+  function beginFreshSession(mode) {
     state.mode = mode;
     state.index = 0;
     state.score = 0;
@@ -1419,9 +1470,11 @@
     state.answerLog = [];
     state.lastLogIndex = -1;
 
-    if (state.context?.kind === "full") state.pool = allQuestions();
+    if (state.context?.kind === "official100")
+      state.pool = pickRandomPool(OFFICIAL_MOCK_SIZE);
+    else if (state.context?.kind === "full") state.pool = allQuestions();
     else if (state.context?.kind === "quick")
-      state.pool = shuffle(allQuestions()).slice(0, 20);
+      state.pool = pickRandomPool(QUICK_MOCK_SIZE);
     else if (state.context?.kind === "round")
       state.pool = questionsForRound(state.context.id);
     else if (state.context?.kind === "topic")
@@ -1430,8 +1483,18 @@
 
     if (state.context?.kind === "miss_review") {
       state.pool = shuffle(state.pool);
-    } else {
+    } else if (
+      state.context?.kind !== "official100" &&
+      state.context?.kind !== "quick"
+    ) {
       state.pool = prioritizeMisses(state.pool);
+    } else {
+      // already a fresh random slice
+      state.pool = state.pool;
+    }
+
+    if (state.context?.kind === "official100") {
+      state.context.label = `Official mock (${state.pool.length} random)`;
     }
 
     document.getElementById("score-pill").textContent = "0";
@@ -2590,6 +2653,21 @@
       resumeDraft();
     } else if (action === "discard-draft") {
       discardDraft();
+    } else if (action === "draft-continue") {
+      closeDraftModal();
+      state.pendingStart = null;
+      resumeDraft();
+    } else if (action === "draft-restart") {
+      closeDraftModal();
+      const pending = state.pendingStart;
+      state.pendingStart = null;
+      clearDraft();
+      if (pending?.mode) beginFreshSession(pending.mode);
+      else updateResumeBanner();
+    } else if (action === "draft-cancel") {
+      closeDraftModal();
+      state.pendingStart = null;
+      updateResumeBanner();
     } else if (action === "toggle-theme") {
       toggleTheme();
     }

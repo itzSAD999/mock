@@ -95,15 +95,15 @@
             <span class="orbit-ring"></span>
             <span class="orbit-ring delay"></span>
             <div class="orbit-core">
-              <span class="orbit-num" id="hero-total">92</span>
+              <span class="orbit-num" id="hero-total">132</span>
               <span class="orbit-label">questions</span>
             </div>
           </div>
           <ul class="hero-rounds" id="hero-rounds">
-            <li><em>24</em> Fundamentals</li>
-            <li><em>16</em> Speed Race</li>
-            <li><em>36</em> True / False</li>
-            <li><em>16</em> Riddles</li>
+            <li><em>34</em> Fundamentals</li>
+            <li><em>26</em> Speed Race</li>
+            <li><em>46</em> True / False</li>
+            <li><em>26</em> Riddles</li>
           </ul>
         </div>
       </div>
@@ -579,6 +579,27 @@
         </section>
       </div>
     </section>
+
+    <div id="draft-modal" class="draft-modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="draft-modal-title">
+      <div class="draft-modal-card">
+        <h3 id="draft-modal-title">Unfinished quiz</h3>
+        <p id="draft-modal-text">
+          You have a quiz in progress on this device. Continue where you left
+          off, or restart (progress for that draft will be cleared).
+        </p>
+        <div class="draft-modal-actions">
+          <button class="btn btn-primary" data-action="draft-continue" type="button">
+            Continue
+          </button>
+          <button class="btn btn-ghost" data-action="draft-restart" type="button">
+            Restart
+          </button>
+          <button class="btn btn-ghost" data-action="draft-cancel" type="button">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="config.example.js"></script>
