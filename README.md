@@ -13,7 +13,22 @@ Practice and team-selection site for the College of Science (KNUST) quiz. Scores
 
 ## Accounts required
 
-Everyone must **Create account** or **Sign in** before practice, official mocks, or team selection. Progress, history, missed-question drills, and leaderboard entries sync to that account. Coach analytics stays PIN-gated for organizers.
+Everyone must **Create account** or **Sign in** before practice, official mocks, live showdown, or team selection. Progress, history, missed-question drills, and leaderboard entries sync to that account. Coach analytics stays PIN-gated for organizers.
+
+## Live showdown
+
+Timed shared room for final-showdown practice (especially riddles):
+
+1. Run **[`supabase/live_migration.sql`](supabase/live_migration.sql)** once in the SQL Editor (existing projects). Fresh installs already get the tables from `schema.sql`.
+2. Sign in → **Live showdown** → create a room (riddles / showdown mix / rapid 20) and seconds per question (default 20).
+3. Share the **link** or **code** — everyone answers the **same set** on the **same clock**. When time runs out, the room advances together.
+
+## Personal focus & candidate audit
+
+- **My scores → Preparation audit** shows bank coverage, never-answered items, persistent gaps, and topic/round need-work counts.
+- **Practice my gaps** (or Practice hub → **Personal focus**) builds up to 40 questions from gaps + unseen items.
+- Normal practice rounds also soft-prioritize misses, then unanswered questions.
+- **Admin scores** includes a **Team planning** board (Ready / Borderline / Needs work), department readiness, coverage & gap meters on people, and a richer leaderboard with podium + score bars.
 
 ## Quick start (local)
 

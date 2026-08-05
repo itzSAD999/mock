@@ -378,6 +378,179 @@
     return String(pin || "") === String(cfg.adminPin || "cos2026");
   }
 
+  function makeLiveCode() {
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let code = "";
+    for (let i = 0; i < 6; i++) {
+      code += alphabet[Math.floor(Math.random() * alphabet.length)];
+    }
+    return code;
+  }
+
+  async function createLiveRoom({ pack, secondsPerQ, label, hostUserId }) {
+    const sb = getClient();
+    if (!sb) throw new Error("Supabase not configured");
+    let lastErr = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const code = makeLiveCode();
+      const { data, error } = await sb
+        .from("live_rooms")
+        .insert({
+          code,
+          host_user_id: hostUserId || cachedUser?.id || null,
+          status: "lobby",
+          pack: pack || "riddles",
+          seconds_per_q: secondsPerQ || 20,
+          label: label || null,
+          question_ids: [],
+        })
+        .select("*")
+        .single();
+      if (!error) return data;
+      lastErr = error;
+      if (error.code !== "23505") throw error;
+    }
+    throw lastErr || new Error("Could not create room");
+  }
+
+  async function getLiveRoomByCode(code) {
+    const sb = getClient();
+    if (!sb) throw new Error("Supabase not configured");
+    const { data, error } = await sb
+      .from("live_rooms")
+      .select("*")
+      .eq("code", String(code || "").trim().toUpperCase())
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  }
+
+  async function getLiveRoomById(id) {
+    const sb = getClient();
+    if (!sb) throw new Error("Supabase not configured");
+    const { data, error } = await sb
+      .from("live_rooms")
+      .select("*")
+      .eq("id", id)
+      .single();
+    if (error) throw error;
+    return data;
+  }
+
+  async function joinLiveRoom(roomId, player) {
+    const sb = getClient();
+    if (!sb) throw new Error("Supabase not configured");
+    const userId = player.userId || cachedUser?.id || null;
+    const row = {
+      room_id: roomId,
+      user_id: userId,
+      participant_id: player.participantId || null,
+      display_name: String(player.displayName || "Player").trim(),
+      department: String(player.department || "").trim(),
+      score: 0,
+      answered: 0,
+      finished: false,
+    };
+
+    if (userId) {
+      const { data: existing } = await sb
+        .from("live_players")
+        .select("*")
+        .eq("room_id", roomId)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (existing) {
+        const { data: updated, error: upErr } = await sb
+          .from("live_players")
+          .update({
+            display_name: row.display_name,
+            department: row.department,
+            participant_id: row.participant_id || existing.participant_id,
+            finished: false,
+          })
+          .eq("id", existing.id)
+          .select("*")
+          .single();
+        if (upErr) throw upErr;
+        return updated;
+      }
+    }
+
+    const { data, error } = await sb
+      .from("live_players")
+      .insert(row)
+      .select("*")
+      .single();
+    if (error) throw error;
+    return data;
+  }
+
+  async function listLivePlayers(roomId) {
+    const sb = getClient();
+    if (!sb) throw new Error("Supabase not configured");
+    const { data, error } = await sb
+      .from("live_players")
+      .select("*")
+      .eq("room_id", roomId)
+      .order("score", { ascending: false })
+      .order("joined_at", { ascending: true });
+    if (error) throw error;
+    return data || [];
+  }
+
+  async function startLiveRoom(roomId, { questionIds, label }) {
+    const sb = getClient();
+    if (!sb) throw new Error("Supabase not configured");
+    const { data, error } = await sb
+      .from("live_rooms")
+      .update({
+        status: "live",
+        question_ids: questionIds,
+        label: label || null,
+        started_at: new Date().toISOString(),
+        finished_at: null,
+      })
+      .eq("id", roomId)
+      .eq("status", "lobby")
+      .select("*")
+      .single();
+    if (error) throw error;
+    return data;
+  }
+
+  async function finishLiveRoom(roomId) {
+    const sb = getClient();
+    if (!sb) throw new Error("Supabase not configured");
+    const { data, error } = await sb
+      .from("live_rooms")
+      .update({
+        status: "finished",
+        finished_at: new Date().toISOString(),
+      })
+      .eq("id", roomId)
+      .select("*")
+      .single();
+    if (error) throw error;
+    return data;
+  }
+
+  async function updateLivePlayerScore(playerId, { score, answered, finished }) {
+    const sb = getClient();
+    if (!sb) throw new Error("Supabase not configured");
+    const patch = {};
+    if (typeof score === "number") patch.score = score;
+    if (typeof answered === "number") patch.answered = answered;
+    if (typeof finished === "boolean") patch.finished = finished;
+    const { data, error } = await sb
+      .from("live_players")
+      .update(patch)
+      .eq("id", playerId)
+      .select("*")
+      .single();
+    if (error) throw error;
+    return data;
+  }
+
   global.CosDB = {
     isConfigured,
     getClient,
@@ -397,5 +570,13 @@
     checkAdminPin,
     getAdminPinHint: () => (cfg.adminPin ? "Set in config.js" : "cos2026"),
     getCachedParticipant: () => cachedParticipant,
+    createLiveRoom,
+    getLiveRoomByCode,
+    getLiveRoomById,
+    joinLiveRoom,
+    listLivePlayers,
+    startLiveRoom,
+    finishLiveRoom,
+    updateLivePlayerScore,
   };
 })(window);

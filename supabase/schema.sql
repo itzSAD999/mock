@@ -31,7 +31,7 @@ create index participants_user_id_idx on public.participants (user_id);
 create table public.sessions (
   id uuid primary key default gen_random_uuid(),
   participant_id uuid not null references public.participants (id) on delete cascade,
-  kind text not null check (kind in ('practice', 'selection', 'official_mock')),
+  kind text not null check (kind in ('practice', 'selection', 'official_mock', 'live')),
   mode text not null default 'contest',
   round_id text,
   label text,
@@ -139,3 +139,54 @@ order by pct desc, s.elapsed_sec asc, s.finished_at desc;
 
 grant select on public.session_leaderboard to anon;
 grant select on public.session_leaderboard to authenticated;
+
+-- ========== LIVE SHOWDOWN (shareable timed rooms) ==========
+create table if not exists public.live_rooms (
+  id uuid primary key default gen_random_uuid(),
+  code text not null unique,
+  host_user_id uuid references auth.users (id) on delete set null,
+  status text not null default 'lobby'
+    check (status in ('lobby', 'live', 'finished')),
+  pack text not null default 'riddles',
+  seconds_per_q int not null default 20,
+  question_ids text[] not null default '{}',
+  label text,
+  started_at timestamptz,
+  finished_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists live_rooms_code_idx on public.live_rooms (code);
+
+create table if not exists public.live_players (
+  id uuid primary key default gen_random_uuid(),
+  room_id uuid not null references public.live_rooms (id) on delete cascade,
+  user_id uuid references auth.users (id) on delete set null,
+  participant_id uuid references public.participants (id) on delete set null,
+  display_name text not null,
+  department text not null default '',
+  score int not null default 0,
+  answered int not null default 0,
+  finished boolean not null default false,
+  joined_at timestamptz not null default now(),
+  unique (room_id, user_id)
+);
+
+create index if not exists live_players_room_idx on public.live_players (room_id);
+
+alter table public.live_rooms enable row level security;
+alter table public.live_players enable row level security;
+
+create policy "live_rooms_select_anon" on public.live_rooms for select to anon using (true);
+create policy "live_rooms_insert_anon" on public.live_rooms for insert to anon with check (true);
+create policy "live_rooms_update_anon" on public.live_rooms for update to anon using (true) with check (true);
+create policy "live_rooms_select_auth" on public.live_rooms for select to authenticated using (true);
+create policy "live_rooms_insert_auth" on public.live_rooms for insert to authenticated with check (true);
+create policy "live_rooms_update_auth" on public.live_rooms for update to authenticated using (true) with check (true);
+
+create policy "live_players_select_anon" on public.live_players for select to anon using (true);
+create policy "live_players_insert_anon" on public.live_players for insert to anon with check (true);
+create policy "live_players_update_anon" on public.live_players for update to anon using (true) with check (true);
+create policy "live_players_select_auth" on public.live_players for select to authenticated using (true);
+create policy "live_players_insert_auth" on public.live_players for insert to authenticated with check (true);
+create policy "live_players_update_auth" on public.live_players for update to authenticated using (true) with check (true);

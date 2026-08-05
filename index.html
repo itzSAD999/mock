@@ -62,6 +62,9 @@
             <button class="btn btn-primary" data-action="start-practice">
               Practice
             </button>
+            <button class="btn btn-ghost" data-action="start-live">
+              Live showdown
+            </button>
             <button class="btn btn-ghost" data-action="start-official">
               Official mock
             </button>
@@ -190,6 +193,18 @@
       <div class="coach-body">
         <p class="coach-status" id="progress-status">Loading…</p>
         <div class="score-summary" id="progress-summary"></div>
+        <section class="coach-section" id="progress-audit-section">
+          <h2>Preparation audit</h2>
+          <p class="section-hint">
+            Coverage of the bank, persistent gaps, and topics/rounds still thin — so practice can target what you have not locked yet.
+          </p>
+          <div id="progress-audit" class="coach-table-wrap"></div>
+          <div class="live-code-actions" style="margin-top: 0.85rem">
+            <button class="btn btn-primary" data-action="start-personal-focus" type="button">
+              Practice my gaps
+            </button>
+          </div>
+        </section>
         <section class="coach-section">
           <h2>Your sessions</h2>
           <p class="section-hint">Practice, selection, and official mocks — tap one to see what you missed.</p>
@@ -319,6 +334,96 @@
       </div>
     </section>
 
+    <!-- LIVE SHOWDOWN LOBBY -->
+    <section id="view-live" class="view view-live">
+      <header class="bar">
+        <button class="icon-btn" data-action="go-home" aria-label="Home">
+          ←
+        </button>
+        <div class="bar-title">
+          <span class="bar-eyebrow">Final showdown practice</span>
+          <strong>Live room</strong>
+        </div>
+      </header>
+
+      <div class="live-body">
+        <p class="section-hint" id="live-hint">
+          Same questions for everyone. Each question is timed (default 20s) — like the real quiz.
+        </p>
+
+        <div class="live-panels">
+          <div class="live-panel" id="live-create-panel">
+            <h3>Host a room</h3>
+            <label class="field-label" for="live-pack">Question pack</label>
+            <select id="live-pack" class="answer-field name-field">
+              <option value="riddles">Riddles only (showdown warm-up)</option>
+              <option value="showdown">Showdown mix (20 Qs)</option>
+              <option value="rapid20">Rapid 20 (shared random set)</option>
+            </select>
+            <label class="field-label" for="live-seconds">Seconds per question</label>
+            <select id="live-seconds" class="answer-field name-field">
+              <option value="15">15 seconds</option>
+              <option value="20" selected>20 seconds</option>
+              <option value="30">30 seconds</option>
+            </select>
+            <button class="btn btn-primary" data-action="live-create" type="button">
+              Create room
+            </button>
+          </div>
+
+          <div class="live-panel" id="live-join-panel">
+            <h3>Join a room</h3>
+            <label class="field-label" for="live-join-code">Room code</label>
+            <input
+              id="live-join-code"
+              class="answer-field name-field"
+              type="text"
+              maxlength="8"
+              placeholder="e.g. AB3K7P"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button class="btn btn-ghost" data-action="live-join" type="button">
+              Join
+            </button>
+          </div>
+        </div>
+
+        <p class="auth-error is-hidden" id="live-error"></p>
+
+        <div class="live-room is-hidden" id="live-room-card">
+          <div class="live-code-row">
+            <div>
+              <p class="live-code-label">Share this link or code</p>
+              <p class="live-code" id="live-code-display">————</p>
+            </div>
+            <div class="live-code-actions">
+              <button class="btn btn-ghost" data-action="live-copy-link" type="button">
+                Copy link
+              </button>
+              <button class="btn btn-ghost" data-action="live-copy-code" type="button">
+                Copy code
+              </button>
+            </div>
+          </div>
+          <p class="live-room-meta" id="live-room-meta"></p>
+          <div class="live-players-wrap">
+            <h4>Players in lobby</h4>
+            <ul class="live-players" id="live-players"></ul>
+          </div>
+          <div class="live-host-actions is-hidden" id="live-host-actions">
+            <button class="btn btn-primary" data-action="live-start" type="button">
+              Start showdown
+            </button>
+            <p class="section-hint">Everyone jumps to the same question on the same clock.</p>
+          </div>
+          <p class="section-hint is-hidden" id="live-waiting-host">
+            Waiting for the host to start…
+          </p>
+        </div>
+      </div>
+    </section>
+
     <!-- PRACTICE -->
     <section id="view-practice" class="view view-practice">
       <header class="bar practice-bar">
@@ -330,12 +435,25 @@
             <span id="progress-label">Q 1 / 12</span>
             <span id="player-chip" class="player-chip is-hidden"></span>
             <span id="timer" class="timer is-hidden">0:00</span>
+            <span id="live-countdown" class="live-countdown is-hidden" aria-live="polite">20</span>
           </div>
           <div class="progress-track">
             <div class="progress-fill" id="progress-fill"></div>
           </div>
+          <div class="live-countdown-track is-hidden" id="live-countdown-track">
+            <div class="live-countdown-fill" id="live-countdown-fill"></div>
+          </div>
         </div>
         <span class="score-pill" id="score-pill">0</span>
+        <button
+          class="btn btn-sm btn-ghost skim-toggle is-hidden"
+          id="btn-skim-toggle"
+          data-action="toggle-answers"
+          type="button"
+          title="Show or hide answers for quick review"
+        >
+          Show answers
+        </button>
       </header>
 
       <div class="practice-stage" id="practice-stage">
@@ -455,6 +573,9 @@
           <button class="chip-filter" data-board-filter="official_mock">
             Official mock
           </button>
+          <button class="chip-filter" data-board-filter="live">
+            Live showdown
+          </button>
           <button class="chip-filter" data-board-filter="practice">
             Practice
           </button>
@@ -462,6 +583,7 @@
         <p class="board-empty is-hidden" id="board-empty">
           No trials yet. Start team selection or an official mock.
         </p>
+        <div id="board-podium" class="board-podium is-hidden"></div>
         <ol class="board-list" id="board-list"></ol>
         <button class="btn btn-primary" data-action="start-select">
           New contestant
@@ -523,6 +645,7 @@
             <select id="coach-kind" class="answer-field">
               <option value="all">All (practice + mocks)</option>
               <option value="official_mock">Official mock</option>
+              <option value="live">Live showdown</option>
               <option value="selection">Team selection</option>
               <option value="practice">Practice</option>
             </select>
@@ -542,9 +665,19 @@
         <p class="coach-status" id="coach-status">Loading…</p>
         <div class="score-summary" id="coach-summary"></div>
 
+        <section class="coach-section" id="coach-planning-section">
+          <h2>Team planning</h2>
+          <p class="section-hint">
+            Readiness for selection / showdown — who is locked in, who is borderline, and who still needs focused practice.
+          </p>
+          <div id="coach-planning" class="planning-grid"></div>
+          <h3 class="coach-subhead">By department</h3>
+          <div id="coach-departments" class="coach-table-wrap"></div>
+        </section>
+
         <section class="coach-section" id="coach-people-section">
           <h2>People</h2>
-          <p class="section-hint">Tap a name to see their scores, what they got wrong, and every practice / mock run.</p>
+          <p class="section-hint">Tap a name for full audit, gaps, and every practice / mock run. Bars show best score vs bank coverage.</p>
           <div id="coach-rankings" class="coach-table-wrap"></div>
         </section>
 
@@ -558,9 +691,15 @@
               <p class="detail-meta" id="coach-person-meta"></p>
             </div>
           </div>
+          <div id="coach-person-ready" class="person-ready-wrap"></div>
           <div class="score-summary" id="coach-person-summary"></div>
           <h3 class="coach-subhead">Averages by type</h3>
           <div id="coach-person-averages" class="coach-table-wrap"></div>
+          <h3 class="coach-subhead">Preparation audit</h3>
+          <p class="section-hint">
+            Bank coverage, unanswered items, and persistent gaps — use this to coach their personal practice.
+          </p>
+          <div id="coach-person-audit" class="coach-table-wrap"></div>
           <h3 class="coach-subhead">Topic gaps</h3>
           <p class="section-hint">Weakest topics first — where they miss most often.</p>
           <div id="coach-person-gaps" class="coach-table-wrap"></div>

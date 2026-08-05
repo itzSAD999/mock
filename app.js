@@ -12,6 +12,7 @@
     name: document.getElementById("view-name"),
     hub: document.getElementById("view-hub"),
     mode: document.getElementById("view-mode"),
+    live: document.getElementById("view-live"),
     practice: document.getElementById("view-practice"),
     results: document.getElementById("view-results"),
     board: document.getElementById("view-board"),
@@ -52,6 +53,8 @@
     authUser: null,
     authTab: "signin",
     pendingAfterAuth: null,
+    live: null, // { room, player, isHost, pollId, tickId, answeredForIndex }
+    showAnswers: false, // skim / study: answers always visible
   };
 
   function show(name) {
@@ -202,7 +205,12 @@
     if (next === "practice") openNameScreen("practice");
     else if (next === "official") openNameScreen("official");
     else if (next === "select") openNameScreen("select");
-    else if (next === "progress") {
+    else if (next === "live") openLiveLobby();
+    else if (typeof next === "string" && next.startsWith("live-join:")) {
+      openLiveLobby(next.slice("live-join:".length));
+    } else if (next === "personal-focus") {
+      startPersonalFocusPractice();
+    } else if (next === "progress") {
       await loadMyProgress();
       show("progress");
     } else show("home");
@@ -764,6 +772,7 @@
   }
 
   function saveDraft() {
+    if (state.sessionKind === "live") return;
     if (!state.pool?.length) return;
     if (state.mode === "study" && !state.answerLog.length && state.index === 0) {
       return;
@@ -1055,15 +1064,33 @@
 
   /** Put historically missed questions first (practice technique). */
   function prioritizeMisses(pool) {
-    if (state.sessionKind === "official_mock" || state.isMissReview) {
+    if (
+      state.sessionKind === "official_mock" ||
+      state.isMissReview ||
+      state.context?.kind === "personal_focus"
+    ) {
       return shuffle(pool);
     }
     const miss = new Set(getMissIds());
-    if (!miss.size) return shuffle(pool);
+    let never = new Set();
+    if (state.progressData?.answers?.length) {
+      const touched = new Set(
+        state.progressData.answers.map((a) => a.question_id).filter(Boolean)
+      );
+      pool.forEach((q) => {
+        if (!touched.has(q.id)) never.add(q.id);
+      });
+    }
+    if (!miss.size && !never.size) return shuffle(pool);
     const weak = [];
+    const unseen = [];
     const rest = [];
-    pool.forEach((q) => (miss.has(q.id) ? weak : rest).push(q));
-    return [...shuffle(weak), ...shuffle(rest)];
+    pool.forEach((q) => {
+      if (miss.has(q.id)) weak.push(q);
+      else if (never.has(q.id)) unseen.push(q);
+      else rest.push(q);
+    });
+    return [...shuffle(weak), ...shuffle(unseen), ...shuffle(rest)];
   }
 
   function startMissReview() {
@@ -1081,6 +1108,234 @@
       label: "Missed questions review",
     };
     state.pool = shuffle(pool);
+    startSession("contest");
+  }
+
+  /** Per-candidate audit: coverage, persistent gaps, never-answered, by topic/round. */
+  function buildCandidateAudit(answers) {
+    const bank = allQuestions();
+    const stats = new Map();
+    (answers || []).forEach((a) => {
+      const id = a.question_id;
+      if (!id) return;
+      if (!stats.has(id)) stats.set(id, { correct: 0, wrong: 0 });
+      const s = stats.get(id);
+      if (a.is_correct) s.correct += 1;
+      else s.wrong += 1;
+    });
+
+    const neverAnswered = [];
+    const gapWrong = [];
+    const solid = [];
+    bank.forEach((q) => {
+      const s = stats.get(q.id);
+      if (!s) {
+        neverAnswered.push(q);
+        return;
+      }
+      if (s.wrong > 0 && s.wrong >= s.correct) gapWrong.push(q);
+      else solid.push(q);
+    });
+
+    const answeredCount = bank.length - neverAnswered.length;
+    const coveragePct = bank.length
+      ? Math.round((answeredCount / bank.length) * 100)
+      : 0;
+
+    function groupRows(list, keyFn) {
+      const map = {};
+      list.forEach((q) => {
+        const key = keyFn(q) || "Untagged";
+        if (!map[key]) map[key] = { key, never: 0, gaps: 0, seen: 0 };
+        map[key].never += 1;
+      });
+      gapWrong.forEach((q) => {
+        const key = keyFn(q) || "Untagged";
+        if (!map[key]) map[key] = { key, never: 0, gaps: 0, seen: 0 };
+        map[key].gaps += 1;
+      });
+      solid.forEach((q) => {
+        const key = keyFn(q) || "Untagged";
+        if (!map[key]) map[key] = { key, never: 0, gaps: 0, seen: 0 };
+        map[key].seen += 1;
+      });
+      // also count attempts accuracy from answers
+      const attemptMap = {};
+      (answers || []).forEach((a) => {
+        const q = bank.find((x) => x.id === a.question_id);
+        const key = keyFn(q || { topic: a.topic, roundName: a.round_id }) || a.topic || a.round_id || "Untagged";
+        if (!attemptMap[key]) attemptMap[key] = { correct: 0, total: 0 };
+        attemptMap[key].total += 1;
+        if (a.is_correct) attemptMap[key].correct += 1;
+      });
+      return Object.values(map)
+        .map((row) => {
+          const att = attemptMap[row.key] || { correct: 0, total: 0 };
+          const need = row.never + row.gaps;
+          return {
+            ...row,
+            need,
+            attempts: att.total,
+            accuracy: att.total ? Math.round((att.correct / att.total) * 100) : null,
+          };
+        })
+        .sort((a, b) => b.need - a.need || (a.accuracy ?? 999) - (b.accuracy ?? 999));
+    }
+
+    return {
+      bankTotal: bank.length,
+      answeredCount,
+      coveragePct,
+      neverAnswered,
+      gapWrong,
+      solid,
+      topicRows: groupRows(neverAnswered, (q) => q.topic),
+      roundRows: groupRows(neverAnswered, (q) => q.roundName || q.roundId),
+      focusCount: gapWrong.length + neverAnswered.length,
+    };
+  }
+
+  function renderCandidateAuditHtml(audit) {
+    if (!audit) return `<p class="coach-empty">No audit data.</p>`;
+    const topicTable = audit.topicRows.length
+      ? `<table class="coach-table">
+        <thead><tr><th>Topic</th><th>Unseen</th><th>Gaps</th><th>Need work</th><th>Accuracy</th></tr></thead>
+        <tbody>
+          ${audit.topicRows
+            .filter((r) => r.need > 0 || r.attempts > 0)
+            .slice(0, 12)
+            .map(
+              (r) => `<tr>
+              <td>${escapeHtml(r.key)}</td>
+              <td>${r.never}</td>
+              <td>${r.gaps}</td>
+              <td><strong>${r.need}</strong></td>
+              <td>${r.accuracy == null ? "—" : r.accuracy + "%"}</td>
+            </tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>`
+      : "";
+    const roundTable = audit.roundRows.length
+      ? `<table class="coach-table" style="margin-top:0.75rem">
+        <thead><tr><th>Round / bank</th><th>Unseen</th><th>Gaps</th><th>Need work</th></tr></thead>
+        <tbody>
+          ${audit.roundRows
+            .filter((r) => r.need > 0)
+            .map(
+              (r) => `<tr>
+              <td>${escapeHtml(r.key)}</td>
+              <td>${r.never}</td>
+              <td>${r.gaps}</td>
+              <td><strong>${r.need}</strong></td>
+            </tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>`
+      : "";
+
+    return `
+      <div class="score-summary" style="margin-bottom:0.85rem">
+        ${renderSummaryCards([
+          { value: `${audit.coveragePct}%`, label: "Bank covered" },
+          { value: audit.answeredCount, label: "Questions touched" },
+          { value: audit.neverAnswered.length, label: "Never answered" },
+          { value: audit.gapWrong.length, label: "Persistent gaps" },
+          { value: audit.focusCount, label: "Focus queue" },
+        ])}
+      </div>
+      <p class="section-hint">
+        Unseen = never attempted. Gaps = more wrongs than corrects (or still mostly wrong). Focus queue = gaps + unseen.
+      </p>
+      ${topicTable || `<p class="coach-empty">No topic rows yet — complete a scored run.</p>`}
+      ${roundTable}`;
+  }
+
+  function uniqueQuestions(list) {
+    const seen = new Set();
+    const out = [];
+    list.forEach((q) => {
+      if (!q?.id || seen.has(q.id)) return;
+      seen.add(q.id);
+      out.push(q);
+    });
+    return out;
+  }
+
+  function buildPersonalFocusPool(answers, { max = 40 } = {}) {
+    const audit = buildCandidateAudit(answers || []);
+    const localMiss = questionsByIds(getMissIds());
+    const weakFirst = uniqueQuestions([...audit.gapWrong, ...localMiss]);
+    const unseen = shuffle(audit.neverAnswered);
+    // Prefer unseen from weakest topics (highest need)
+    const weakTopics = new Set(
+      audit.topicRows.filter((r) => r.need > 0).slice(0, 4).map((r) => r.key)
+    );
+    unseen.sort((a, b) => {
+      const aw = weakTopics.has(a.topic) ? 0 : 1;
+      const bw = weakTopics.has(b.topic) ? 0 : 1;
+      return aw - bw;
+    });
+    const pool = uniqueQuestions([...shuffle(weakFirst), ...unseen]);
+    if (!pool.length) return shuffle(allQuestions()).slice(0, max);
+    return pool.slice(0, max);
+  }
+
+  function syncMissBankFromAnswers(answers) {
+    if (!state.playerName || !answers?.length) return;
+    const store = loadMissStore();
+    const key = personKey(state.playerName, state.playerDept);
+    const stats = new Map();
+    answers.forEach((a) => {
+      if (!a.question_id) return;
+      if (!stats.has(a.question_id)) stats.set(a.question_id, { c: 0, w: 0 });
+      const s = stats.get(a.question_id);
+      if (a.is_correct) s.c += 1;
+      else s.w += 1;
+    });
+    const ids = [];
+    stats.forEach((s, id) => {
+      if (s.w > 0 && s.w >= s.c) ids.push(id);
+    });
+    store[key] = ids;
+    saveMissStore(store);
+  }
+
+  async function startPersonalFocusPractice() {
+    if (!requireAuth("personal-focus")) return;
+    let answers = state.progressData?.answers || [];
+    if (!answers.length && db()?.isConfigured?.()) {
+      try {
+        const data = await db().fetchMyProgress();
+        state.progressData = data;
+        answers = data?.answers || [];
+        if (data?.answers) syncMissBankFromAnswers(data.answers);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    const pool = buildPersonalFocusPool(answers, { max: 40 });
+    if (!pool.length) {
+      alert("No questions available for focus practice.");
+      return;
+    }
+    const audit = buildCandidateAudit(answers);
+    state.isMissReview = true;
+    state.flow = "practice";
+    state.sessionKind = "practice";
+    state.context = {
+      kind: "personal_focus",
+      id: "personal_focus",
+      type: "mixed",
+      label: `Personal focus · ${audit.gapWrong.length} gaps · ${Math.min(
+        audit.neverAnswered.length,
+        Math.max(0, pool.length - audit.gapWrong.length)
+      )} unseen`,
+    };
+    state.pool = pool;
+    state.lastMissIds = pool.map((q) => q.id);
     startSession("contest");
   }
 
@@ -1123,7 +1378,7 @@
       at: Date.now(),
     };
 
-    if (kind === "selection" || kind === "official_mock") {
+    if (kind === "selection" || kind === "official_mock" || kind === "live") {
       addLocalBoardEntry(localEntry);
     } else if (kind === "practice" && state.playerName) {
       addLocalBoardEntry(localEntry);
@@ -1194,14 +1449,16 @@
       try {
         const kinds =
           filter === "tracked"
-            ? ["selection", "official_mock"]
+            ? ["selection", "official_mock", "live"]
             : filter === "selection"
               ? ["selection"]
               : filter === "official_mock"
                 ? ["official_mock"]
+                : filter === "live"
+                  ? ["live"]
                 : filter === "practice"
                   ? ["practice"]
-                  : ["selection", "official_mock"];
+                  : ["selection", "official_mock", "live"];
         const remote = await db().fetchLeaderboard(kinds, 80);
         list = (remote || []).map((r) => ({
           name: r.display_name,
@@ -1223,8 +1480,9 @@
     if (!list.length) {
       const local = loadLocalBoard().filter((e) => {
         if (filter === "tracked")
-          return e.kind === "selection" || e.kind === "official_mock" || !e.kind;
+          return e.kind === "selection" || e.kind === "official_mock" || e.kind === "live" || !e.kind;
         if (filter === "practice") return e.kind === "practice";
+        if (filter === "live") return e.kind === "live";
         return e.kind === filter || (!e.kind && filter === "selection");
       });
       list = local;
@@ -1233,22 +1491,52 @@
     if (!list.length) {
       empty.classList.remove("is-hidden");
       ol.innerHTML = "";
+      document.getElementById("board-podium")?.classList.add("is-hidden");
       return;
     }
 
     empty.classList.add("is-hidden");
+    const podium = document.getElementById("board-podium");
+    if (podium) {
+      const top = list.slice(0, 3);
+      if (top.length) {
+        podium.classList.remove("is-hidden");
+        const order = top.length >= 3 ? [top[1], top[0], top[2]] : top;
+        const ranks = top.length >= 3 ? [2, 1, 3] : top.map((_, i) => i + 1);
+        podium.innerHTML = order
+          .map((e, i) => {
+            const rank = ranks[i];
+            return `<div class="podium-card podium-${rank}">
+              <span class="podium-rank">${rank}</span>
+              <strong>${escapeHtml(e.name)}</strong>
+              <em>${e.pct}%</em>
+              <span>${e.score}/${e.total}</span>
+            </div>`;
+          })
+          .join("");
+      } else {
+        podium.classList.add("is-hidden");
+        podium.innerHTML = "";
+      }
+    }
+
     ol.innerHTML = list
-      .map(
-        (e, i) => `
-      <li class="board-row">
+      .map((e, i) => {
+        const tone = e.pct >= 80 ? "good" : e.pct >= 60 ? "warn" : "bad";
+        return `
+      <li class="board-row${i < 3 ? " board-row-top" : ""}">
         <span class="board-rank">${i + 1}</span>
         <div class="board-info">
           <strong>${escapeHtml(e.name)}</strong>
-          <span>${escapeHtml(e.department || "—")} · ${escapeHtml(e.label || e.kind || "")} · ${e.pct}%</span>
+          <span>${escapeHtml(e.department || "—")} · ${escapeHtml(kindLabel(e.kind) || e.label || "")} · ${formatTime(e.elapsed || 0)}</span>
+          ${meterBar(e.pct, tone)}
         </div>
-        <span class="board-score">${e.score}/${e.total}</span>
-      </li>`
-      )
+        <div class="board-score-wrap">
+          <span class="board-score">${e.score}/${e.total}</span>
+          <span class="board-pct">${e.pct}%</span>
+        </div>
+      </li>`;
+      })
       .join("");
   }
 
@@ -1441,6 +1729,28 @@
       </button>`
         : "";
 
+    const focusTile =
+      state.flow === "practice"
+        ? `
+      <button class="round-tile round-tile-miss" data-round="personal-focus">
+        <div class="rt-num">Personal focus</div>
+        <h3>Gaps + unanswered</h3>
+        <p>Builds a set from your persistent gaps and questions you have never answered — quiz prep that targets your blind spots.</p>
+        <span class="rt-count">Up to 40 questions</span>
+      </button>`
+        : "";
+
+    const skimTile =
+      state.flow === "practice"
+        ? `
+      <button class="round-tile round-tile-quick" data-round="skim-all">
+        <div class="rt-num">Skim</div>
+        <h3>See all answers</h3>
+        <p>No timer, no typing — flip through Q&amp;A with answers shown. Use when you need a fast review before the showdown.</p>
+        <span class="rt-count">${QUIZ.totalQuestions} questions</span>
+      </button>`
+        : "";
+
     const bankN = QUIZ.totalQuestions;
     const officialN = Math.min(OFFICIAL_MOCK_SIZE, bankN);
     const officialTile = `
@@ -1484,7 +1794,7 @@
       document.getElementById("hub-title").textContent =
         `${officialN} questions · shared set every 10 minutes`;
     } else {
-      grid.innerHTML = missTile + quickTile + tiles + fullTile;
+      grid.innerHTML = focusTile + skimTile + missTile + quickTile + tiles + fullTile;
     }
 
     grid.querySelectorAll("[data-round]").forEach((btn) => {
@@ -1493,6 +1803,14 @@
         if (id === "misses") {
           state.lastMissIds = getMissIds();
           startMissReview();
+          return;
+        }
+        if (id === "personal-focus") {
+          startPersonalFocusPractice();
+          return;
+        }
+        if (id === "skim-all") {
+          startSkimSession(allQuestions(), "Full bank · answer skim");
           return;
         }
         if (tracked) {
@@ -1611,6 +1929,11 @@
         blurb: "Enter answers yourself. Graded automatically — use this to test knowledge.",
       },
       {
+        mode: "skim",
+        title: "See all answers",
+        blurb: "Answers shown — flip Prev/Next fast. Best when you have little time and need to skim.",
+      },
+      {
         mode: "study",
         title: "Study flashcards",
         blurb: "Read the question, reveal the answer when ready. No scoring.",
@@ -1643,9 +1966,25 @@
     show("mode");
   }
 
+  function startSkimSession(pool, label) {
+    if (!pool?.length) return;
+    state.isMissReview = false;
+    state.flow = "practice";
+    state.sessionKind = "practice";
+    state.showAnswers = true;
+    state.context = {
+      kind: "skim",
+      id: "skim",
+      type: "mixed",
+      label: label || "Answer skim",
+    };
+    state.pool = shuffle([...pool]);
+    startSession("skim");
+  }
+
   /* ——— SESSION ——— */
   function startSession(mode) {
-    if (hasUsableDraft() && draftHasProgress()) {
+    if (mode !== "skim" && hasUsableDraft() && draftHasProgress()) {
       state.pendingStart = { mode };
       openDraftModal();
       return;
@@ -1662,6 +2001,8 @@
     state.answered = false;
     state.answerLog = [];
     state.lastLogIndex = -1;
+    if (mode === "skim") state.showAnswers = true;
+    else if (mode !== "study") state.showAnswers = false;
 
     if (state.context?.kind === "official100") {
       // New start / restart → bump attempt and take the shared set for that attempt
@@ -1681,10 +2022,11 @@
       state.pool = questionsForRound(state.context.id);
     else if (state.context?.kind === "topic")
       state.pool = questionsForTopic(state.context.id);
-    // miss_review keeps pool from startMissReview
-
-    if (state.context?.kind === "miss_review") {
+    // miss_review / personal_focus / skim keep pool from starter
+    if (state.context?.kind === "miss_review" || state.context?.kind === "personal_focus") {
       state.pool = shuffle(state.pool);
+    } else if (state.context?.kind === "skim") {
+      /* keep startSkimSession order */
     } else if (
       state.context?.kind !== "official100" &&
       state.context?.kind !== "quick"
@@ -1693,12 +2035,27 @@
     }
 
     document.getElementById("score-pill").textContent = "0";
+    const scorePill = document.getElementById("score-pill");
+    const skimToggle = document.getElementById("btn-skim-toggle");
+    if (mode === "skim" || mode === "study") {
+      scorePill?.classList.add("is-hidden");
+      if (skimToggle) {
+        skimToggle.classList.remove("is-hidden");
+        updateSkimToggleUi();
+      }
+    } else {
+      scorePill?.classList.remove("is-hidden");
+      skimToggle?.classList.add("is-hidden");
+    }
 
     const chip = document.getElementById("player-chip");
-    if (state.playerName) {
-      chip.textContent = state.isMissReview
-        ? `${state.playerName} · misses`
-        : state.playerName;
+    if (state.playerName || mode === "skim") {
+      chip.textContent =
+        mode === "skim"
+          ? "Skim · answers on"
+          : state.isMissReview
+            ? `${state.playerName} · misses`
+            : state.playerName;
       chip.classList.remove("is-hidden");
     } else {
       chip.classList.add("is-hidden");
@@ -1722,7 +2079,7 @@
 
     show("practice");
     warmSemanticModel();
-    saveDraft();
+    if (mode !== "skim") saveDraft();
     renderQuestion();
   }
 
@@ -1794,13 +2151,80 @@
       return;
     }
 
+    // study / skim — optional always-on answers
+    const showNow = state.showAnswers;
+    if (state.mode === "skim" || showNow) {
+      if (showNow) showAnswerPanel(q);
+      else {
+        reveal.classList.add("is-hidden");
+      }
+      actions.innerHTML = `
+        <button class="btn btn-ghost" data-act="prev" ${state.index === 0 ? "disabled" : ""}>Previous</button>
+        <button class="btn btn-primary" data-act="next">${
+          state.index >= state.pool.length - 1 ? "Done" : "Next"
+        }</button>`;
+      actions.querySelector("[data-act=prev]")?.addEventListener("click", prevQuestion);
+      actions.querySelector("[data-act=next]").addEventListener("click", nextQuestion);
+      return;
+    }
+
+    if (state.mode === "study") {
+      actions.innerHTML = `
+        <button class="btn btn-primary" data-act="reveal">Reveal answer</button>`;
+      actions.querySelector("[data-act=reveal]").addEventListener("click", revealAnswer);
+      return;
+    }
+
     actions.innerHTML = `
       <button class="btn btn-primary" data-act="reveal">Reveal answer</button>`;
     actions.querySelector("[data-act=reveal]").addEventListener("click", revealAnswer);
   }
 
+  function updateSkimToggleUi() {
+    const btn = document.getElementById("btn-skim-toggle");
+    if (!btn) return;
+    const on = state.mode === "skim" || state.showAnswers;
+    btn.textContent = on ? "Hide answers" : "Show answers";
+    btn.classList.toggle("is-active", on);
+    const chip = document.getElementById("player-chip");
+    if (state.mode === "skim" && chip) {
+      chip.textContent = on ? "Skim · answers on" : "Skim · answers off";
+    }
+  }
+
+  function showAnswerPanel(q) {
+    const panel = document.getElementById("reveal-panel");
+    panel.classList.remove("is-hidden", "is-correct", "is-wrong");
+    document.getElementById("reveal-label").textContent = "Answer";
+    document.getElementById("reveal-answer").textContent = q.a;
+    const exp = document.getElementById("reveal-explain");
+    if (q.explain) {
+      exp.textContent = q.explain;
+      exp.classList.remove("is-hidden");
+    } else {
+      exp.classList.add("is-hidden");
+    }
+    state.revealed = true;
+  }
+
+  function prevQuestion() {
+    if (state.index <= 0) return;
+    state.index -= 1;
+    state.answered = false;
+    state.revealed = false;
+    renderQuestion();
+  }
+
+  function toggleShowAnswers() {
+    if (state.mode !== "study" && state.mode !== "skim") return;
+    state.showAnswers = !state.showAnswers;
+    updateSkimToggleUi();
+    renderQuestion();
+  }
+
   async function submitTyped() {
     if (state.answered) return;
+    if (state.sessionKind === "live" && state.live?.answeredForIndex === state.index) return;
     const input = document.getElementById("answer-input");
     const raw = input ? input.value : "";
     if (!raw.trim()) {
@@ -1809,6 +2233,7 @@
     }
 
     state.answered = true;
+    if (state.live) state.live.answeredForIndex = state.index;
     if (input) input.disabled = true;
 
     const q = currentQ();
@@ -1832,6 +2257,7 @@
     }
 
     logAnswer({ q, userAnswer: raw, isCorrect: ok, markedOverride: false });
+    if (state.sessionKind === "live") syncLivePlayerScore();
     showFeedback(ok, q, raw);
   }
 
@@ -1856,6 +2282,10 @@
     }
 
     const actions = document.getElementById("practice-actions");
+    if (state.sessionKind === "live") {
+      actions.innerHTML = `<p class="section-hint">${ok ? "Locked in." : "Locked in — next question on the shared clock."}</p>`;
+      return;
+    }
     if (!ok && q.type !== "tf") {
       actions.innerHTML = `
         <button class="btn btn-ghost" data-act="override">Mark correct</button>
@@ -1899,7 +2329,9 @@
 
   function gradeTF(choice, btn) {
     if (state.answered) return;
+    if (state.sessionKind === "live" && state.live?.answeredForIndex === state.index) return;
     state.answered = true;
+    if (state.live) state.live.answeredForIndex = state.index;
     const q = currentQ();
     const correct = normalize(q.a).startsWith("true") ? "TRUE" : "FALSE";
     const ok = choice === correct;
@@ -1917,6 +2349,7 @@
     }
 
     logAnswer({ q, userAnswer: choice, isCorrect: ok, markedOverride: false });
+    if (state.sessionKind === "live") syncLivePlayerScore();
     showFeedback(ok, q, choice);
   }
 
@@ -1938,7 +2371,7 @@
     }
 
     // Re-score everything with current matcher before saving
-    if (state.mode !== "study" && state.answerLog.length) {
+    if (state.mode !== "study" && state.mode !== "skim" && state.answerLog.length) {
       const { log, score } = await regradeAnswerLog(state.answerLog);
       state.answerLog = log;
       state.score = score;
@@ -1948,7 +2381,7 @@
     clearDraft();
 
     const total = state.pool.length;
-    const scored = state.mode !== "study";
+    const scored = state.mode !== "study" && state.mode !== "skim";
     const score = scored ? state.score : null;
     const pct = score !== null && total ? Math.round((score / total) * 100) : null;
 
@@ -1966,8 +2399,11 @@
     }
 
     let title = "Session complete";
-    if (state.isMissReview) {
-      title = pct >= 80 ? "Weak spots clearing" : "Keep drilling misses";
+    if (state.isMissReview || state.context?.kind === "personal_focus") {
+      title =
+        pct >= 80
+          ? "Gaps closing — keep going"
+          : "Keep drilling your blind spots";
     } else if (pct !== null) {
       if (pct >= 85) title = "Strong pick";
       else if (pct >= 65) title = "Solid run";
@@ -2140,12 +2576,36 @@
   function renderSummaryCards(cards) {
     return `<div class="score-summary-grid">${cards
       .map(
-        (c) => `<div class="score-card">
+        (c) => `<div class="score-card${c.tone ? ` score-card-${c.tone}` : ""}">
         <em>${escapeHtml(String(c.value))}</em>
         <span>${escapeHtml(c.label)}</span>
       </div>`
       )
       .join("")}</div>`;
+  }
+
+  function meterBar(pct, tone) {
+    const p = Math.max(0, Math.min(100, Number(pct) || 0));
+    return `<div class="meter" title="${p}%"><div class="meter-fill meter-${tone || "blue"}" style="width:${p}%"></div></div>`;
+  }
+
+  function readinessOf(person) {
+    const best = person.bestPct || 0;
+    const avg = person.avgPct || 0;
+    const cov = person.coveragePct || 0;
+    const gaps = person.gapCount || 0;
+    const mocks = person.official_mock || 0;
+    if (best >= 80 && cov >= 35 && gaps < 40) {
+      return { id: "ready", label: "Ready", tone: "good" };
+    }
+    if (best >= 65 || (avg >= 60 && mocks >= 1) || cov >= 25) {
+      return { id: "borderline", label: "Borderline", tone: "warn" };
+    }
+    return { id: "needs", label: "Needs work", tone: "bad" };
+  }
+
+  function readinessBadge(r) {
+    return `<span class="ready-badge ready-${r.tone}">${escapeHtml(r.label)}</span>`;
   }
 
   function renderWrongAnswerList(wrongAnswers) {
@@ -2200,7 +2660,21 @@
 
   function buildPersonStats(data, kindFilter) {
     const sessions = filteredCoachSessions(data, kindFilter);
+    const sessionIds = new Set(sessions.map((s) => s.id));
+    const answers = data.answers.filter((a) => sessionIds.has(a.session_id));
     const byId = Object.fromEntries(data.participants.map((p) => [p.id, p]));
+    const sessById = Object.fromEntries(sessions.map((s) => [s.id, s]));
+    const answersByPerson = {};
+    sessions.forEach((s) => {
+      if (!answersByPerson[s.participant_id]) answersByPerson[s.participant_id] = [];
+    });
+    answers.forEach((a) => {
+      const sess = sessById[a.session_id];
+      if (!sess) return;
+      if (!answersByPerson[sess.participant_id]) answersByPerson[sess.participant_id] = [];
+      answersByPerson[sess.participant_id].push(a);
+    });
+
     const stats = {};
     sessions.forEach((s) => {
       const p = byId[s.participant_id];
@@ -2217,9 +2691,14 @@
           practice: 0,
           selection: 0,
           official_mock: 0,
+          live: 0,
           avgPct: 0,
           pctSum: 0,
           lastAt: null,
+          coveragePct: 0,
+          gapCount: 0,
+          neverCount: 0,
+          focusCount: 0,
         };
       }
       const st = stats[p.id];
@@ -2237,10 +2716,80 @@
     });
     Object.values(stats).forEach((st) => {
       st.avgPct = st.runs ? Math.round(st.pctSum / st.runs) : 0;
+      const audit = buildCandidateAudit(answersByPerson[st.id] || []);
+      st.coveragePct = audit.coveragePct;
+      st.gapCount = audit.gapWrong.length;
+      st.neverCount = audit.neverAnswered.length;
+      st.focusCount = audit.focusCount;
+      st.readiness = readinessOf(st);
     });
     return Object.values(stats).sort(
-      (a, b) => b.bestPct - a.bestPct || b.avgPct - a.avgPct
+      (a, b) =>
+        b.bestPct - a.bestPct ||
+        b.coveragePct - a.coveragePct ||
+        b.avgPct - a.avgPct
     );
+  }
+
+  function renderTeamPlanning(people) {
+    const buckets = {
+      ready: people.filter((p) => p.readiness.id === "ready"),
+      borderline: people.filter((p) => p.readiness.id === "borderline"),
+      needs: people.filter((p) => p.readiness.id === "needs"),
+    };
+    const planning = document.getElementById("coach-planning");
+    if (planning) {
+      planning.innerHTML = `
+        <div class="plan-card plan-good">
+          <em>${buckets.ready.length}</em>
+          <strong>Ready</strong>
+          <p>${buckets.ready.slice(0, 4).map((p) => escapeHtml(p.name)).join(", ") || "Nobody yet"}</p>
+        </div>
+        <div class="plan-card plan-warn">
+          <em>${buckets.borderline.length}</em>
+          <strong>Borderline</strong>
+          <p>${buckets.borderline.slice(0, 4).map((p) => escapeHtml(p.name)).join(", ") || "—"}</p>
+        </div>
+        <div class="plan-card plan-bad">
+          <em>${buckets.needs.length}</em>
+          <strong>Needs work</strong>
+          <p>${buckets.needs.slice(0, 4).map((p) => escapeHtml(p.name)).join(", ") || "—"}</p>
+        </div>`;
+    }
+
+    const depts = {};
+    people.forEach((p) => {
+      const d = p.department || "Unlisted";
+      if (!depts[d]) depts[d] = { dept: d, n: 0, ready: 0, bestSum: 0, covSum: 0 };
+      depts[d].n += 1;
+      if (p.readiness.id === "ready") depts[d].ready += 1;
+      depts[d].bestSum += p.bestPct;
+      depts[d].covSum += p.coveragePct;
+    });
+    const deptRows = Object.values(depts).sort((a, b) => b.n - a.n);
+    const deptEl = document.getElementById("coach-departments");
+    if (deptEl) {
+      deptEl.innerHTML = deptRows.length
+        ? `<table class="coach-table">
+          <thead><tr><th>Department</th><th>People</th><th>Ready</th><th>Avg best</th><th>Avg coverage</th></tr></thead>
+          <tbody>
+            ${deptRows
+              .map((d) => {
+                const avgBest = Math.round(d.bestSum / d.n);
+                const avgCov = Math.round(d.covSum / d.n);
+                return `<tr>
+                  <td>${escapeHtml(d.dept)}</td>
+                  <td>${d.n}</td>
+                  <td><strong>${d.ready}</strong> / ${d.n}</td>
+                  <td>${avgBest}% ${meterBar(avgBest, avgBest >= 70 ? "good" : avgBest >= 50 ? "warn" : "bad")}</td>
+                  <td>${avgCov}% ${meterBar(avgCov, "blue")}</td>
+                </tr>`;
+              })
+              .join("")}
+          </tbody>
+        </table>`
+        : `<p class="coach-empty">No department data yet.</p>`;
+    }
   }
 
   function renderCoach(data, kindFilter) {
@@ -2262,17 +2811,22 @@
     const personSection = document.getElementById("coach-person-section");
     const aggTopics = document.getElementById("coach-agg-topics");
     const aggHard = document.getElementById("coach-agg-hard");
+    const planningSection = document.getElementById("coach-planning-section");
+
+    const readyN = filteredPeople.filter((p) => p.readiness.id === "ready").length;
+    const needN = filteredPeople.filter((p) => p.readiness.id === "needs").length;
 
     document.getElementById("coach-summary").innerHTML = renderSummaryCards([
-      { value: filteredPeople.length, label: "People" },
-      { value: sessions.length, label: "Sessions" },
+      { value: filteredPeople.length, label: "People in view", tone: "blue" },
+      { value: readyN, label: "Ready picks", tone: "good" },
+      { value: needN, label: "Need more drill", tone: "bad" },
       {
         value: sessions.filter((s) => s.kind === "official_mock").length,
         label: "Official mocks",
       },
       {
-        value: sessions.filter((s) => s.kind === "practice").length,
-        label: "Practice runs",
+        value: sessions.filter((s) => s.kind === "live").length,
+        label: "Live rooms",
       },
       {
         value: answers.length
@@ -2280,7 +2834,8 @@
               (answers.filter((a) => a.is_correct).length / answers.length) * 100
             )}%`
           : "—",
-        label: "Overall accuracy",
+        label: "Team accuracy",
+        tone: "blue",
       },
     ]);
 
@@ -2288,6 +2843,7 @@
       peopleSection.classList.add("is-hidden");
       aggTopics.classList.add("is-hidden");
       aggHard.classList.add("is-hidden");
+      if (planningSection) planningSection.classList.add("is-hidden");
       personSection.classList.remove("is-hidden");
       renderCoachPerson(data, kindFilter, state.coachPersonId);
       return;
@@ -2296,26 +2852,44 @@
     peopleSection.classList.remove("is-hidden");
     aggTopics.classList.remove("is-hidden");
     aggHard.classList.remove("is-hidden");
+    if (planningSection) planningSection.classList.remove("is-hidden");
     personSection.classList.add("is-hidden");
 
+    renderTeamPlanning(filteredPeople);
+
     document.getElementById("coach-rankings").innerHTML = filteredPeople.length
-      ? `<table class="coach-table coach-table-click">
-        <thead><tr><th>#</th><th>Name</th><th>Dept</th><th>Best</th><th>Avg</th><th>Runs</th><th>Mock</th><th>Select</th><th>Practice</th></tr></thead>
+      ? `<table class="coach-table coach-table-click coach-table-rich">
+        <thead><tr><th>#</th><th>Candidate</th><th>Status</th><th>Best</th><th>Coverage</th><th>Gaps</th><th>Activity</th></tr></thead>
         <tbody>
           ${filteredPeople
-            .map(
-              (r, i) => `<tr data-action="coach-open-person" data-person-id="${escapeHtml(r.id)}" tabindex="0" role="button">
+            .map((r, i) => {
+              const last = r.lastAt
+                ? new Date(r.lastAt).toLocaleDateString()
+                : "—";
+              return `<tr data-action="coach-open-person" data-person-id="${escapeHtml(r.id)}" tabindex="0" role="button">
               <td>${i + 1}</td>
-              <td><strong>${escapeHtml(r.name)}</strong></td>
-              <td>${escapeHtml(r.department || "—")}</td>
-              <td>${r.bestPct}% <span class="muted">(${r.bestScore})</span></td>
-              <td>${r.avgPct}%</td>
-              <td>${r.runs}</td>
-              <td>${r.official_mock || 0}</td>
-              <td>${r.selection || 0}</td>
-              <td>${r.practice || 0}</td>
-            </tr>`
-            )
+              <td>
+                <strong>${escapeHtml(r.name)}</strong>
+                <div class="cell-sub">${escapeHtml(r.department || "—")}</div>
+              </td>
+              <td>${readinessBadge(r.readiness)}</td>
+              <td>
+                <strong>${r.bestPct}%</strong>
+                <div class="cell-sub">${escapeHtml(r.bestScore)} · avg ${r.avgPct}%</div>
+                ${meterBar(r.bestPct, r.bestPct >= 75 ? "good" : r.bestPct >= 55 ? "warn" : "bad")}
+              </td>
+              <td>
+                <strong>${r.coveragePct}%</strong>
+                <div class="cell-sub">${r.neverCount} unseen</div>
+                ${meterBar(r.coveragePct, "blue")}
+              </td>
+              <td><strong>${r.gapCount}</strong><div class="cell-sub">focus ${r.focusCount}</div></td>
+              <td>
+                <div class="cell-sub">${r.runs} runs · M${r.official_mock || 0} S${r.selection || 0} P${r.practice || 0} L${r.live || 0}</div>
+                <div class="cell-sub">${escapeHtml(last)}</div>
+              </td>
+            </tr>`;
+            })
             .join("")}
         </tbody>
       </table>`
@@ -2333,59 +2907,60 @@
         ...t,
         pct: t.total ? Math.round((t.correct / t.total) * 100) : 0,
       }))
-      .sort((a, b) => a.pct - b.pct);
+      .sort((a, b) => a.pct - b.pct || b.total - a.total);
 
     document.getElementById("coach-topics").innerHTML = topicRows.length
       ? `<table class="coach-table">
-        <thead><tr><th>Topic</th><th>Accuracy</th><th>Correct</th><th>Attempts</th></tr></thead>
+        <thead><tr><th>Topic</th><th>Team accuracy</th><th>Attempts</th></tr></thead>
         <tbody>
           ${topicRows
             .map(
               (t) => `<tr>
               <td>${escapeHtml(t.topic)}</td>
-              <td>${t.pct}%</td>
-              <td>${t.correct}</td>
+              <td><strong>${t.pct}%</strong> ${meterBar(t.pct, t.pct >= 70 ? "good" : t.pct >= 50 ? "warn" : "bad")}</td>
               <td>${t.total}</td>
             </tr>`
             )
             .join("")}
         </tbody>
       </table>`
-      : `<p class="coach-empty">No answer data yet.</p>`;
+      : `<p class="coach-empty">No topic data yet.</p>`;
 
-    const qs = {};
+    const hardMap = {};
     answers.forEach((a) => {
-      if (!qs[a.question_id])
-        qs[a.question_id] = { id: a.question_id, correct: 0, total: 0 };
-      qs[a.question_id].total += 1;
-      if (a.is_correct) qs[a.question_id].correct += 1;
+      if (!a.question_id) return;
+      if (!hardMap[a.question_id]) {
+        hardMap[a.question_id] = { id: a.question_id, wrong: 0, total: 0, topic: a.topic };
+      }
+      hardMap[a.question_id].total += 1;
+      if (!a.is_correct) hardMap[a.question_id].wrong += 1;
     });
-    const hard = Object.values(qs)
-      .filter((qRow) => qRow.total >= 1)
-      .map((qRow) => ({
-        ...qRow,
-        pct: Math.round((qRow.correct / qRow.total) * 100),
-        text: questionTextById(qRow.id),
+    const hardRows = Object.values(hardMap)
+      .filter((h) => h.total >= 2)
+      .map((h) => ({
+        ...h,
+        missPct: Math.round((h.wrong / h.total) * 100),
+        text: questionTextById(h.id),
       }))
-      .sort((a, b) => a.pct - b.pct || b.total - a.total)
+      .sort((a, b) => b.missPct - a.missPct || b.wrong - a.wrong)
       .slice(0, 15);
 
-    document.getElementById("coach-hard").innerHTML = hard.length
+    document.getElementById("coach-hard").innerHTML = hardRows.length
       ? `<table class="coach-table">
-        <thead><tr><th>Question</th><th>Accuracy</th><th>n</th></tr></thead>
+        <thead><tr><th>Question</th><th>Miss rate</th><th>Wrong</th></tr></thead>
         <tbody>
-          ${hard
+          ${hardRows
             .map(
-              (qRow) => `<tr>
-              <td title="${escapeHtml(qRow.id)}">${escapeHtml(qRow.text.slice(0, 120))}${qRow.text.length > 120 ? "…" : ""}</td>
-              <td>${qRow.pct}%</td>
-              <td>${qRow.total}</td>
+              (h) => `<tr>
+              <td><div class="cell-sub">${escapeHtml(h.topic || "")}</div>${escapeHtml(h.text)}</td>
+              <td><strong>${h.missPct}%</strong> ${meterBar(h.missPct, "bad")}</td>
+              <td>${h.wrong}/${h.total}</td>
             </tr>`
             )
             .join("")}
         </tbody>
       </table>`
-      : `<p class="coach-empty">No question stats yet.</p>`;
+      : `<p class="coach-empty">Need more attempts to rank hard questions.</p>`;
   }
 
   function renderCoachPerson(data, kindFilter, personId) {
@@ -2414,17 +2989,29 @@
 
     document.getElementById("coach-person-name").textContent =
       person.display_name;
+    const auditEarly = buildCandidateAudit(answers);
+    const personReady = readinessOf({
+      bestPct: best,
+      avgPct: avg,
+      coveragePct: auditEarly.coveragePct,
+      gapCount: auditEarly.gapWrong.length,
+      official_mock: sessions.filter((s) => s.kind === "official_mock").length,
+    });
     document.getElementById("coach-person-meta").textContent = [
       person.department || "No department",
       person.email || null,
       `${sessions.length} session${sessions.length === 1 ? "" : "s"}`,
+      personReady.label,
     ]
       .filter(Boolean)
       .join(" · ");
 
     document.getElementById("coach-person-summary").innerHTML = renderSummaryCards([
-      { value: `${best}%`, label: "Best score" },
+      { value: `${best}%`, label: "Best score", tone: best >= 75 ? "good" : best >= 55 ? "warn" : "bad" },
       { value: `${avg}%`, label: "Overall average" },
+      { value: `${auditEarly.coveragePct}%`, label: "Bank coverage", tone: "blue" },
+      { value: auditEarly.gapWrong.length, label: "Persistent gaps", tone: "bad" },
+      { value: auditEarly.neverAnswered.length, label: "Never answered" },
       {
         value: sessions.filter((s) => s.kind === "official_mock").length,
         label: "Official mocks",
@@ -2435,6 +3022,13 @@
       },
       { value: wrongAll.length, label: "Wrong answers (all)" },
     ]);
+    const readyEl = document.getElementById("coach-person-ready");
+    if (readyEl) {
+      readyEl.innerHTML = `<div class="person-ready person-ready-${personReady.tone}">
+        ${readinessBadge(personReady)}
+        <span>Use Personal focus practice on gaps + unseen. Coverage ${auditEarly.coveragePct}% · focus queue ${auditEarly.focusCount}.</span>
+      </div>`;
+    }
 
     // Averages by session kind
     const byKind = {};
@@ -2464,6 +3058,10 @@
         </tbody>
       </table>`
       : `<p class="coach-empty">No scored sessions yet.</p>`;
+
+    const audit = buildCandidateAudit(answers);
+    const auditEl = document.getElementById("coach-person-audit");
+    if (auditEl) auditEl.innerHTML = renderCandidateAuditHtml(audit);
 
     // Topic gaps for this person
     const topics = {};
@@ -2644,6 +3242,8 @@
       sessEl.innerHTML = "";
       topicEl.innerHTML = "";
       summaryEl.innerHTML = "";
+      const auditEl = document.getElementById("progress-audit");
+      if (auditEl) auditEl.innerHTML = "";
       detailSection.classList.add("is-hidden");
       return;
     }
@@ -2657,6 +3257,10 @@
         sessEl.innerHTML = "";
         topicEl.innerHTML = "";
         summaryEl.innerHTML = "";
+        const auditEl = document.getElementById("progress-audit");
+        if (auditEl) {
+          auditEl.innerHTML = renderCandidateAuditHtml(buildCandidateAudit([]));
+        }
         detailSection.classList.add("is-hidden");
         return;
       }
@@ -2702,6 +3306,11 @@
       { value: `${avg}%`, label: "Average" },
       { value: wrongTotal, label: "Wrong answers (all)" },
     ]);
+
+    syncMissBankFromAnswers(answers);
+    const audit = buildCandidateAudit(answers);
+    const auditEl = document.getElementById("progress-audit");
+    if (auditEl) auditEl.innerHTML = renderCandidateAuditHtml(audit);
 
     if (state.progressSessionId) {
       const sess = sessions.find((s) => s.id === state.progressSessionId);
@@ -2788,6 +3397,474 @@
       : `<p class="coach-empty">Answer-level data appears after you complete a scored session.</p>`;
   }
 
+  /* ——— LIVE SHOWDOWN (shared timed room) ——— */
+  function liveShareUrl(code) {
+    const u = new URL(window.location.href);
+    u.searchParams.set("live", code);
+    u.hash = "";
+    return u.toString();
+  }
+
+  function buildLivePool(pack, seedStr) {
+    const seed = hashSeed(seedStr || "cos-live");
+    if (pack === "showdown") {
+      return seededShuffle(
+        [...questionsForRound("riddles"), ...questionsForRound("speed")],
+        seed
+      ).slice(0, 20);
+    }
+    if (pack === "rapid20") {
+      return seededShuffle(allQuestions(), seed).slice(0, 20);
+    }
+    return questionsForRound("riddles");
+  }
+
+  function livePackLabel(pack) {
+    if (pack === "showdown") return "Showdown mix (20)";
+    if (pack === "rapid20") return "Rapid 20";
+    return "Riddles";
+  }
+
+  function stopLiveLoops() {
+    if (state.live?.pollId) {
+      clearInterval(state.live.pollId);
+      state.live.pollId = null;
+    }
+    if (state.live?.tickId) {
+      clearInterval(state.live.tickId);
+      state.live.tickId = null;
+    }
+  }
+
+  function hideLiveCountdown() {
+    document.getElementById("live-countdown")?.classList.add("is-hidden");
+    document.getElementById("live-countdown-track")?.classList.add("is-hidden");
+    document.getElementById("live-countdown")?.classList.remove("is-urgent");
+    document.getElementById("live-countdown-fill")?.classList.remove("is-urgent");
+  }
+
+  function setLiveError(msg) {
+    const el = document.getElementById("live-error");
+    if (!el) return;
+    if (!msg) {
+      el.textContent = "";
+      el.classList.add("is-hidden");
+      return;
+    }
+    el.textContent = msg;
+    el.classList.remove("is-hidden");
+  }
+
+  function openLiveLobby(prefillCode) {
+    if (!db()?.isConfigured?.()) {
+      alert("Live showdown needs Supabase. Configure config.js, then run supabase/live_migration.sql.");
+      return;
+    }
+    stopLiveLoops();
+    hideLiveCountdown();
+    setLiveError("");
+    document.getElementById("live-room-card")?.classList.add("is-hidden");
+    document.getElementById("live-create-panel")?.classList.remove("is-hidden");
+    document.getElementById("live-join-panel")?.classList.remove("is-hidden");
+    if (prefillCode) {
+      const input = document.getElementById("live-join-code");
+      if (input) input.value = String(prefillCode).toUpperCase();
+    }
+    show("live");
+    if (prefillCode) joinLiveRoomFlow(prefillCode);
+  }
+
+  async function createLiveRoomFlow() {
+    setLiveError("");
+    if (!requireAuth("live")) return;
+    try {
+      const pack = document.getElementById("live-pack")?.value || "riddles";
+      const seconds = Number(document.getElementById("live-seconds")?.value || 20);
+      const room = await db().createLiveRoom({
+        pack,
+        secondsPerQ: seconds,
+        label: `Live · ${livePackLabel(pack)} · ${seconds}s`,
+        hostUserId: state.authUser?.id,
+      });
+      const participant = db().getCachedParticipant?.() || (await db().ensureParticipantFromUser());
+      const player = await db().joinLiveRoom(room.id, {
+        userId: state.authUser?.id,
+        participantId: participant?.id,
+        displayName: state.playerName || participant?.display_name || "Host",
+        department: state.playerDept || participant?.department || "",
+      });
+      state.live = {
+        room,
+        player,
+        isHost: true,
+        pollId: null,
+        tickId: null,
+        answeredForIndex: -1,
+      };
+      renderLiveLobby();
+      startLiveLobbyPoll();
+    } catch (err) {
+      console.error(err);
+      const msg = String(err?.message || err);
+      setLiveError(
+        msg.includes("live_rooms") || msg.includes("schema cache")
+          ? "Live tables missing — run supabase/live_migration.sql in Supabase SQL Editor."
+          : msg
+      );
+    }
+  }
+
+  async function joinLiveRoomFlow(code) {
+    setLiveError("");
+    if (!requireAuth(`live-join:${String(code || "").trim().toUpperCase()}`)) return;
+    const clean = String(code || document.getElementById("live-join-code")?.value || "")
+      .trim()
+      .toUpperCase();
+    if (!clean) {
+      setLiveError("Enter a room code.");
+      return;
+    }
+    try {
+      const room = await db().getLiveRoomByCode(clean);
+      if (!room) {
+        setLiveError("No room found for that code.");
+        return;
+      }
+      if (room.status === "finished") {
+        setLiveError("That room has already finished.");
+        return;
+      }
+      const participant = db().getCachedParticipant?.() || (await db().ensureParticipantFromUser());
+      const player = await db().joinLiveRoom(room.id, {
+        userId: state.authUser?.id,
+        participantId: participant?.id,
+        displayName: state.playerName || participant?.display_name || "Player",
+        department: state.playerDept || participant?.department || "",
+      });
+      state.live = {
+        room,
+        player,
+        isHost: room.host_user_id && room.host_user_id === state.authUser?.id,
+        pollId: null,
+        tickId: null,
+        answeredForIndex: -1,
+      };
+      if (room.status === "live") {
+        beginLiveQuiz(room);
+        return;
+      }
+      renderLiveLobby();
+      startLiveLobbyPoll();
+    } catch (err) {
+      console.error(err);
+      const msg = String(err?.message || err);
+      setLiveError(
+        msg.includes("live_rooms") || msg.includes("schema cache")
+          ? "Live tables missing — run supabase/live_migration.sql in Supabase SQL Editor."
+          : msg
+      );
+    }
+  }
+
+  async function renderLiveLobby() {
+    const live = state.live;
+    if (!live?.room) return;
+    const card = document.getElementById("live-room-card");
+    card.classList.remove("is-hidden");
+    document.getElementById("live-code-display").textContent = live.room.code;
+    document.getElementById("live-room-meta").textContent =
+      `${livePackLabel(live.room.pack)} · ${live.room.seconds_per_q}s per question · status: ${live.room.status}`;
+
+    const hostActions = document.getElementById("live-host-actions");
+    const waiting = document.getElementById("live-waiting-host");
+    if (live.isHost && live.room.status === "lobby") {
+      hostActions.classList.remove("is-hidden");
+      waiting.classList.add("is-hidden");
+    } else {
+      hostActions.classList.add("is-hidden");
+      waiting.classList.toggle("is-hidden", live.room.status !== "lobby");
+    }
+
+    try {
+      const players = await db().listLivePlayers(live.room.id);
+      const list = document.getElementById("live-players");
+      list.innerHTML = players.length
+        ? players
+            .map(
+              (p) =>
+                `<li><span>${escapeHtml(p.display_name)}${
+                  live.room.host_user_id === p.user_id ? " · host" : ""
+                }</span><em>${escapeHtml(p.department || "")}</em></li>`
+            )
+            .join("")
+        : "<li>No players yet</li>";
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  function startLiveLobbyPoll() {
+    stopLiveLoops();
+    if (!state.live?.room) return;
+    state.live.pollId = setInterval(async () => {
+      if (!state.live?.room || state.live.room.status === "live") return;
+      try {
+        const room = await db().getLiveRoomById(state.live.room.id);
+        state.live.room = room;
+        state.live.isHost = room.host_user_id && room.host_user_id === state.authUser?.id;
+        if (room.status === "live") {
+          beginLiveQuiz(room);
+          return;
+        }
+        if (room.status === "finished") {
+          stopLiveLoops();
+          setLiveError("Host ended the room.");
+          return;
+        }
+        renderLiveLobby();
+      } catch (err) {
+        console.error(err);
+      }
+    }, 1500);
+  }
+
+  async function startLiveRoomFlow() {
+    if (!state.live?.isHost || !state.live.room) return;
+    setLiveError("");
+    try {
+      const seed = `cos-live:${state.live.room.code}`;
+      const pool = buildLivePool(state.live.room.pack, seed);
+      const ids = pool.map((q) => q.id);
+      const room = await db().startLiveRoom(state.live.room.id, {
+        questionIds: ids,
+        label: state.live.room.label || `Live · ${livePackLabel(state.live.room.pack)}`,
+      });
+      state.live.room = room;
+      beginLiveQuiz(room);
+    } catch (err) {
+      console.error(err);
+      setLiveError(err.message || String(err));
+    }
+  }
+
+  function poolFromLiveRoom(room) {
+    const byId = Object.fromEntries(allQuestions().map((q) => [q.id, q]));
+    return (room.question_ids || []).map((id) => byId[id]).filter(Boolean);
+  }
+
+  function liveIndexFromRoom(room) {
+    if (!room?.started_at || room.status !== "live") return 0;
+    const start = Date.parse(room.started_at);
+    const sec = Number(room.seconds_per_q) || 20;
+    const n = (room.question_ids || []).length;
+    if (!n || Number.isNaN(start)) return 0;
+    const idx = Math.floor((Date.now() - start) / (sec * 1000));
+    return Math.min(Math.max(0, idx), n);
+  }
+
+  function liveMsLeft(room, idx) {
+    const start = Date.parse(room.started_at);
+    const sec = Number(room.seconds_per_q) || 20;
+    const end = start + (idx + 1) * sec * 1000;
+    return Math.max(0, end - Date.now());
+  }
+
+  function beginLiveQuiz(room) {
+    stopLiveLoops();
+    const pool = poolFromLiveRoom(room);
+    if (!pool.length) {
+      setLiveError("Room has no questions.");
+      return;
+    }
+    state.live.room = room;
+    state.flow = "live";
+    state.sessionKind = "live";
+    state.mode = "contest";
+    state.context = {
+      kind: "live",
+      label: room.label || `Live · ${room.code}`,
+      id: room.code,
+    };
+    state.pool = pool;
+    state.index = liveIndexFromRoom(room);
+    state.score = 0;
+    state.answerLog = [];
+    state.lastLogIndex = -1;
+    state.revealed = false;
+    state.answered = false;
+    state.live.answeredForIndex = -1;
+    state.startedAt = Date.parse(room.started_at) || Date.now();
+    state.isMissReview = false;
+
+    document.getElementById("score-pill").textContent = "0";
+    const chip = document.getElementById("player-chip");
+    chip.textContent = `${state.playerName || "Player"} · LIVE`;
+    chip.classList.remove("is-hidden");
+    document.getElementById("timer")?.classList.add("is-hidden");
+    stopTimer();
+
+    show("practice");
+    warmSemanticModel();
+    if (state.index >= pool.length) {
+      finishLiveQuiz();
+      return;
+    }
+    renderQuestion();
+    updateLiveCountdownUi();
+    state.live.tickId = setInterval(onLiveTick, 200);
+  }
+
+  function updateLiveCountdownUi() {
+    const room = state.live?.room;
+    if (!room || state.sessionKind !== "live") {
+      hideLiveCountdown();
+      return;
+    }
+    const cd = document.getElementById("live-countdown");
+    const track = document.getElementById("live-countdown-track");
+    const fill = document.getElementById("live-countdown-fill");
+    if (!cd || !track || !fill) return;
+    cd.classList.remove("is-hidden");
+    track.classList.remove("is-hidden");
+    const sec = Number(room.seconds_per_q) || 20;
+    const msLeft = liveMsLeft(room, state.index);
+    const left = Math.ceil(msLeft / 1000);
+    cd.textContent = String(Math.max(0, left));
+    const pct = Math.max(0, Math.min(100, (msLeft / (sec * 1000)) * 100));
+    fill.style.width = `${pct}%`;
+    const urgent = left <= 5;
+    cd.classList.toggle("is-urgent", urgent);
+    fill.classList.toggle("is-urgent", urgent);
+  }
+
+  async function onLiveTick() {
+    if (state.sessionKind !== "live" || !state.live?.room) return;
+    let room = state.live.room;
+    try {
+      // refresh room lightly every ~2s via tick counter
+      if (!state.live._refreshAt || Date.now() > state.live._refreshAt) {
+        state.live._refreshAt = Date.now() + 2000;
+        room = await db().getLiveRoomById(room.id);
+        state.live.room = room;
+      }
+    } catch {
+      /* keep local */
+    }
+
+    if (room.status === "finished") {
+      finishLiveQuiz();
+      return;
+    }
+
+    const target = liveIndexFromRoom(room);
+    updateLiveCountdownUi();
+
+    if (target > state.index) {
+      // time expired on current / skipped ahead
+      while (state.index < target && state.index < state.pool.length) {
+        if (state.live.answeredForIndex !== state.index) {
+          const q = state.pool[state.index];
+          if (q) {
+            logAnswer({
+              q,
+              userAnswer: "",
+              isCorrect: false,
+              markedOverride: false,
+            });
+          }
+        }
+        state.index += 1;
+        state.answered = false;
+        state.revealed = false;
+      }
+      syncLivePlayerScore();
+      if (state.index >= state.pool.length) {
+        finishLiveQuiz();
+        return;
+      }
+      state.live.answeredForIndex = -1;
+      renderQuestion();
+      updateLiveCountdownUi();
+      return;
+    }
+
+    if (target >= state.pool.length) {
+      finishLiveQuiz();
+    }
+  }
+
+  async function syncLivePlayerScore() {
+    if (!state.live?.player?.id) return;
+    try {
+      await db().updateLivePlayerScore(state.live.player.id, {
+        score: state.score,
+        answered: state.answerLog.length,
+        finished: state.index >= state.pool.length,
+      });
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function finishLiveQuiz() {
+    stopLiveLoops();
+    hideLiveCountdown();
+    if (state.live?.isHost && state.live.room?.id) {
+      try {
+        await db().finishLiveRoom(state.live.room.id);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    await syncLivePlayerScore();
+
+    // Append live standings into results copy
+    let standingsHtml = "";
+    try {
+      const players = await db().listLivePlayers(state.live.room.id);
+      standingsHtml = players
+        .map(
+          (p, i) =>
+            `${i + 1}. ${p.display_name} — ${p.score}/${state.pool.length}`
+        )
+        .join(" · ");
+    } catch {
+      /* ignore */
+    }
+
+    state.sessionKind = "live";
+    state.context = {
+      ...(state.context || {}),
+      label: standingsHtml
+        ? `${state.context?.label || "Live"} · ${standingsHtml}`
+        : state.context?.label || "Live showdown",
+    };
+    await finishSession();
+  }
+
+  async function copyLiveShare(kind) {
+    if (!state.live?.room?.code) return;
+    const text =
+      kind === "code" ? state.live.room.code : liveShareUrl(state.live.room.code);
+    try {
+      await navigator.clipboard.writeText(text);
+      setLiveError(kind === "code" ? "Code copied." : "Link copied — share with the team.");
+      setTimeout(() => setLiveError(""), 2000);
+    } catch {
+      prompt("Copy this:", text);
+    }
+  }
+
+  function consumeLiveQueryParam() {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("live");
+    if (!code) return null;
+    params.delete("live");
+    const next = `${window.location.pathname}${params.toString() ? `?${params}` : ""}${window.location.hash || ""}`;
+    window.history.replaceState({}, "", next || window.location.pathname);
+    return code.trim().toUpperCase();
+  }
+
   document.body.addEventListener("click", (e) => {
     const authTab = e.target.closest("[data-auth-tab]");
     if (authTab) {
@@ -2815,6 +3892,24 @@
     } else if (action === "start-practice" || action === "start-study") {
       if (!requireAuth("practice")) return;
       openNameScreen("practice");
+    } else if (action === "start-live") {
+      if (!requireAuth("live")) return;
+      openLiveLobby();
+    } else if (action === "start-personal-focus") {
+      startPersonalFocusPractice();
+    } else if (action === "toggle-answers") {
+      toggleShowAnswers();
+    } else if (action === "live-create") {
+      createLiveRoomFlow();
+    } else if (action === "live-join") {
+      const code = document.getElementById("live-join-code")?.value || "";
+      joinLiveRoomFlow(code);
+    } else if (action === "live-start") {
+      startLiveRoomFlow();
+    } else if (action === "live-copy-link") {
+      copyLiveShare("link");
+    } else if (action === "live-copy-code") {
+      copyLiveShare("code");
     } else if (action === "open-auth-signup") {
       setAuthTab("signup");
       show("auth");
@@ -2840,6 +3935,8 @@
       confirmIdentity();
     } else if (action === "go-home") {
       stopTimer();
+      stopLiveLoops();
+      hideLiveCountdown();
       show("home");
     } else if (action === "hub-back") {
       stopTimer();
@@ -2851,6 +3948,12 @@
       openHub();
     } else if (action === "exit-practice") {
       stopTimer();
+      if (state.sessionKind === "live") {
+        stopLiveLoops();
+        hideLiveCountdown();
+        openLiveLobby(state.live?.room?.code);
+        return;
+      }
       openHub();
     } else if (action === "retry") {
       state.isMissReview = false;
@@ -2998,12 +4101,13 @@
   }
 
   window.addEventListener("beforeunload", () => {
+    if (state.sessionKind === "live") return;
     if (state.pool?.length && views.practice?.classList.contains("is-active")) {
       saveDraft();
     }
   });
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden" && state.pool?.length) {
+    if (document.visibilityState === "hidden" && state.pool?.length && state.sessionKind !== "live") {
       saveDraft();
     }
   });
@@ -3024,7 +4128,13 @@
   syncHeroCounts();
   updateDbStatus();
   updateAuthUI();
-  refreshAuth();
+  const pendingLiveCode = consumeLiveQueryParam();
+  refreshAuth().then(() => {
+    if (pendingLiveCode) {
+      if (!requireAuth(`live-join:${pendingLiveCode}`)) return;
+      openLiveLobby(pendingLiveCode);
+    }
+  });
   if (db()?.isConfigured?.()) {
     db().onAuthChange((session) => {
       state.authUser = session?.user || null;
