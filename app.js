@@ -3407,35 +3407,146 @@
 
   function buildLivePool(pack, seedStr) {
     const seed = hashSeed(seedStr || "cos-live");
-    const bank = allQuestions();
-    if (pack === "full") {
-      return seededShuffle(bank, seed);
+    const { scope, count } = parseLivePack(pack);
+    let pool = [];
+
+    if (scope === "showdown") {
+      pool = [...questionsForRound("riddles"), ...questionsForRound("speed")];
+    } else if (scope === "full" || scope === "rapid20" || scope === "rapid40" || scope === "official92") {
+      pool = allQuestions();
+    } else if (scope.startsWith("round:")) {
+      pool = questionsForRound(scope.slice(6));
+    } else if (scope.startsWith("topic:")) {
+      pool = questionsForTopic(scope.slice(6));
+    } else if (scope === "riddles") {
+      pool = questionsForRound("riddles");
+    } else {
+      // legacy / unknown → try as round id, else full bank
+      const asRound = QUIZ.rounds.find((r) => r.id === scope);
+      pool = asRound ? questionsForRound(scope) : allQuestions();
     }
-    if (pack === "showdown") {
-      return seededShuffle(
-        [...questionsForRound("riddles"), ...questionsForRound("speed")],
-        seed
-      ).slice(0, 20);
+
+    pool = seededShuffle(pool, seed);
+    const n = count && count > 0 ? Math.min(count, pool.length) : pool.length;
+    return pool.slice(0, n);
+  }
+
+  function parseLivePack(pack) {
+    const raw = String(pack || "full");
+    const [scopePart, countPart] = raw.split("::");
+    let count = countPart != null && countPart !== "" ? Number(countPart) : null;
+    // legacy fixed packs
+    if (scopePart === "rapid20") count = count || 20;
+    if (scopePart === "rapid40") count = count || 40;
+    if (scopePart === "official92") count = count || 92;
+    if (scopePart === "showdown") count = count || 20;
+    return {
+      scope: scopePart || "full",
+      count: Number.isFinite(count) && count > 0 ? count : null,
+    };
+  }
+
+  function encodeLivePack(scope, count) {
+    if (count == null || count === "" || count === "all") return String(scope);
+    return `${scope}::${Number(count)}`;
+  }
+
+  function liveScopeLabel(scope) {
+    if (scope === "full" || scope === "rapid20" || scope === "rapid40" || scope === "official92") {
+      return "Full bank";
     }
-    if (pack === "rapid20") {
-      return seededShuffle(bank, seed).slice(0, 20);
+    if (scope === "showdown") return "Showdown mix (riddles + speed)";
+    if (scope === "riddles") return "Riddles";
+    if (scope.startsWith("round:")) {
+      const id = scope.slice(6);
+      return QUIZ.rounds.find((r) => r.id === id)?.name || id;
     }
-    if (pack === "rapid40") {
-      return seededShuffle(bank, seed).slice(0, Math.min(40, bank.length));
-    }
-    if (pack === "official92") {
-      return seededShuffle(bank, seed).slice(0, Math.min(92, bank.length));
-    }
-    return questionsForRound("riddles");
+    if (scope.startsWith("topic:")) return scope.slice(6);
+    return QUIZ.rounds.find((r) => r.id === scope)?.name || scope;
   }
 
   function livePackLabel(pack) {
-    if (pack === "full") return `Full bank (${QUIZ.totalQuestions})`;
-    if (pack === "showdown") return "Showdown mix (20)";
-    if (pack === "rapid20") return "Rapid 20";
-    if (pack === "rapid40") return "Rapid 40";
-    if (pack === "official92") return "Official-size 92";
-    return "Riddles";
+    const { scope, count } = parseLivePack(pack);
+    const base = liveScopeLabel(scope);
+    const avail = liveScopeAvailableCount(scope);
+    const n = count ? Math.min(count, avail) : avail;
+    return `${base} · ${n} Qs`;
+  }
+
+  function liveScopeAvailableCount(scope) {
+    if (scope === "showdown") {
+      return questionsForRound("riddles").length + questionsForRound("speed").length;
+    }
+    if (scope === "full" || scope === "rapid20" || scope === "rapid40" || scope === "official92") {
+      return allQuestions().length;
+    }
+    if (scope.startsWith("round:")) return questionsForRound(scope.slice(6)).length;
+    if (scope.startsWith("topic:")) return questionsForTopic(scope.slice(6)).length;
+    if (scope === "riddles") return questionsForRound("riddles").length;
+    const asRound = QUIZ.rounds.find((r) => r.id === scope);
+    return asRound ? questionsForRound(scope).length : allQuestions().length;
+  }
+
+  function populateLiveCreateOptions() {
+    const packEl = document.getElementById("live-pack");
+    const countEl = document.getElementById("live-count");
+    if (!packEl) return;
+
+    const prev = packEl.value || "full";
+    const opts = [
+      { value: "full", label: `Full bank (${QUIZ.totalQuestions})` },
+      { value: "showdown", label: "Showdown mix (riddles + speed)" },
+      ...QUIZ.rounds.map((r) => ({
+        value: `round:${r.id}`,
+        label: `${r.name} (${r.questions.length})`,
+      })),
+      ...(QUIZ.topics || []).map((t) => ({
+        value: `topic:${t}`,
+        label: `Topic · ${t}`,
+      })),
+    ];
+    packEl.innerHTML = opts
+      .map((o) => `<option value="${escapeHtml(o.value)}">${escapeHtml(o.label)}</option>`)
+      .join("");
+    if ([...packEl.options].some((o) => o.value === prev)) packEl.value = prev;
+    else packEl.value = "full";
+
+    syncLiveCountLimits();
+    if (countEl && !countEl.value) countEl.value = "20";
+  }
+
+  function syncLiveCountLimits() {
+    const packEl = document.getElementById("live-pack");
+    const countEl = document.getElementById("live-count");
+    const hint = document.getElementById("live-count-hint");
+    if (!packEl || !countEl) return;
+    const avail = liveScopeAvailableCount(packEl.value);
+    countEl.max = String(avail);
+    countEl.min = "1";
+    let n = Number(countEl.value) || 20;
+    if (n > avail) n = avail;
+    if (n < 1) n = 1;
+    countEl.value = String(n);
+    if (hint) {
+      hint.textContent = `Available in this category: ${avail}. Everyone gets the same ${n} question(s).`;
+    }
+  }
+
+  function readLiveCreateConfig() {
+    const scope = document.getElementById("live-pack")?.value || "full";
+    const seconds = Number(document.getElementById("live-seconds")?.value || 20);
+    let count = Number(document.getElementById("live-count")?.value || 20);
+    const avail = liveScopeAvailableCount(scope);
+    if (!Number.isFinite(count) || count < 1) count = Math.min(20, avail);
+    count = Math.min(count, avail);
+    const pack = encodeLivePack(scope, count);
+    return {
+      scope,
+      count,
+      seconds,
+      pack,
+      label: `Live · ${livePackLabel(pack)} · ${seconds}s`,
+    };
   }
 
   function stopLiveLoops() {
@@ -3500,6 +3611,7 @@
     document.getElementById("live-room-card")?.classList.add("is-hidden");
     document.getElementById("live-create-panel")?.classList.remove("is-hidden");
     document.getElementById("live-join-panel")?.classList.remove("is-hidden");
+    populateLiveCreateOptions();
     if (prefillCode) {
       const input = document.getElementById("live-join-code");
       if (input) input.value = String(prefillCode).toUpperCase();
@@ -3512,12 +3624,11 @@
     setLiveError("");
     if (!requireAuth("live")) return;
     try {
-      const pack = document.getElementById("live-pack")?.value || "riddles";
-      const seconds = Number(document.getElementById("live-seconds")?.value || 20);
+      const cfg = readLiveCreateConfig();
       const room = await db().createLiveRoom({
-        pack,
-        secondsPerQ: seconds,
-        label: `Live · ${livePackLabel(pack)} · ${seconds}s`,
+        pack: cfg.pack,
+        secondsPerQ: cfg.seconds,
+        label: cfg.label,
         hostUserId: state.authUser?.id,
       });
       const participant = db().getCachedParticipant?.() || (await db().ensureParticipantFromUser());
@@ -3900,6 +4011,19 @@
   }
 
   document.body.addEventListener("click", (e) => {
+    const liveCountBtn = e.target.closest("[data-live-count]");
+    if (liveCountBtn) {
+      const countEl = document.getElementById("live-count");
+      const packEl = document.getElementById("live-pack");
+      if (countEl && packEl) {
+        const avail = liveScopeAvailableCount(packEl.value);
+        const raw = liveCountBtn.dataset.liveCount;
+        countEl.value = raw === "all" ? String(avail) : String(raw);
+        syncLiveCountLimits();
+      }
+      return;
+    }
+
     const authTab = e.target.closest("[data-auth-tab]");
     if (authTab) {
       setAuthTab(authTab.dataset.authTab);
@@ -4169,6 +4293,15 @@
   syncHeroCounts();
   updateDbStatus();
   updateAuthUI();
+  const livePackEl = document.getElementById("live-pack");
+  const liveCountEl = document.getElementById("live-count");
+  if (livePackEl) {
+    livePackEl.addEventListener("change", syncLiveCountLimits);
+  }
+  if (liveCountEl) {
+    liveCountEl.addEventListener("change", syncLiveCountLimits);
+    liveCountEl.addEventListener("input", syncLiveCountLimits);
+  }
   const pendingLiveCode = consumeLiveQueryParam();
   refreshAuth().then(() => {
     if (pendingLiveCode) {

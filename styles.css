@@ -1931,6 +1931,16 @@ html[data-theme="light"] .coach-table th {
   font-size: 0.8rem;
 }
 
+.live-count-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.live-count-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
 .live-leave-row {
   margin-top: 1rem;
 }

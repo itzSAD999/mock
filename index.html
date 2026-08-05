@@ -354,20 +354,36 @@
         <div class="live-panels">
           <div class="live-panel" id="live-create-panel">
             <h3>Host a room</h3>
-            <label class="field-label" for="live-pack">Question pack</label>
-            <select id="live-pack" class="answer-field name-field">
-              <option value="full">Full bank (all questions)</option>
-              <option value="riddles">Riddles only (showdown warm-up)</option>
-              <option value="showdown">Showdown mix (20 Qs)</option>
-              <option value="rapid20">Rapid 20 (shared random set)</option>
-              <option value="rapid40">Rapid 40 (shared random set)</option>
-              <option value="official92">Official-size 92 (shared random set)</option>
-            </select>
+            <label class="field-label" for="live-pack">Category</label>
+            <select id="live-pack" class="answer-field name-field"></select>
+            <label class="field-label" for="live-count">Number of questions</label>
+            <div class="live-count-row">
+              <input
+                id="live-count"
+                class="answer-field name-field"
+                type="number"
+                min="1"
+                max="500"
+                value="20"
+                inputmode="numeric"
+              />
+              <div class="live-count-presets" id="live-count-presets">
+                <button type="button" class="chip-filter" data-live-count="10">10</button>
+                <button type="button" class="chip-filter" data-live-count="20">20</button>
+                <button type="button" class="chip-filter" data-live-count="40">40</button>
+                <button type="button" class="chip-filter" data-live-count="92">92</button>
+                <button type="button" class="chip-filter" data-live-count="all">All</button>
+              </div>
+            </div>
+            <p class="section-hint" id="live-count-hint">Pick how many questions from that category (shared for everyone).</p>
             <label class="field-label" for="live-seconds">Seconds per question</label>
             <select id="live-seconds" class="answer-field name-field">
+              <option value="10">10 seconds</option>
               <option value="15">15 seconds</option>
               <option value="20" selected>20 seconds</option>
               <option value="30">30 seconds</option>
+              <option value="45">45 seconds</option>
+              <option value="60">60 seconds</option>
             </select>
             <button class="btn btn-primary" data-action="live-create" type="button">
               Create room
